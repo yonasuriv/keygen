@@ -1,12 +1,12 @@
 <p align="center">
-  <img width="424" height="281" alt="Keygen" src="./github/assets/logo.png" />
+  <img width="424" height="281" alt="Keygen" src=".github/assets/logo.png" />
 </p>
 
-`keygen` is a small Bash utility for generating application secrets, API keys, memorable passwords, UUIDs, and common framework secret formats from the command line.
+Keygen is a small Bash utility for generating application secrets, API keys, memorable passwords, UUIDs, and common framework secret formats from the command line.
 
 It uses `/dev/urandom` for built-in character generation and delegates the framework-style shortcuts to `openssl rand` so their output matches the standard commands administrators already use.
 
-## Features
+### Features
 
 - Random tokens from configurable character sets
 - Memorable passphrases backed by a local, installed, cached, or remote wordlist
@@ -16,7 +16,7 @@ It uses `/dev/urandom` for built-in character generation and delegates the frame
 - Version checks, self-update, and system install commands
 
 
-## Installation
+### Installation
 
 From the repository root:
 
@@ -39,20 +39,7 @@ PREFIX="$HOME/.local" ./keygen.sh --install
 
 The installer creates the config file and bundled wordlist only when they do not already exist, so local user settings and custom wordlists are preserved across updates.
 
-## Updates and Version Checks
-
-```sh
-keygen --version
-keygen --update
-```
-
-`--version` prints the local version and checks the upstream repository for updates.
-
-`--update` downloads the latest `keygen.sh` and `.meta` from the main branch. It updates the script and metadata only; it does not overwrite the installed user config or wordlists.
-
-Patch versions are bumped automatically on pushes to `main` that change core runtime files: `keygen.sh` or files under `wordlist/`.
-
-## Configuration
+### Configuration
 
 The installed config file is a shell-style file:
 
@@ -68,8 +55,6 @@ Environment variables still work for one-off overrides:
 KEYGEN_MIN_WORD_LEN=5 keygen --type memorable
 ```
 
-## Wordlists
-
 Memorable mode resolves wordlists in this order:
 
 1. `KEYGEN_WORDLIST_PATH`, if set
@@ -80,7 +65,17 @@ Memorable mode resolves wordlists in this order:
 
 If no usable local wordlist is found, `keygen` attempts to download the project wordlist and cache it.
 
-## Usage
+**Updates and version checks:**
+
+```sh
+keygen --version # Prints the local version and checks the upstream repository for updates.
+keygen --update  # Downloads the latest stable version.
+                 # This only updates the script and metadata only; it does not overwrite the installed user config or wordlists.
+```
+
+Patch versions are bumped automatically on pushes to main branch that change core runtime files only.
+
+### Usage
 
 ```sh
 keygen [options]
@@ -93,7 +88,8 @@ keygen --safe
 
 Run `keygen --help` for the full command reference.
 
-### Examples
+<details>
+  <summary><b>Examples</b></summary>
 
 ```sh
 keygen
@@ -114,16 +110,18 @@ keygen --safe
 | `keygen appkey` | `openssl rand -base64 32` |
 | `keygen django` | `openssl rand -base64 50 \| tr -dc 'A-Za-z0-9!@#$%^&*(-_=+)'` |
 | `keygen --safe` | `openssl rand -base64 32 \| tr '+/' '-_' \| tr -d '='` |
+</details>
 
-### FAQ
+<details>
+  <summary><b>FAQ</b></summary>
 
-1. Why `keygen -t hex -l 32` differs from `openssl rand -hex 32`?
+  1. Why `keygen -t hex -l 32` differs from `openssl rand -hex 32`? \
+    - `keygen -t hex -l 32 -c lower` generates 32 hex characters. \
+    - `openssl rand -hex 32` generates 32 random bytes and prints them as hex. Each byte becomes two hex characters, so the output is 64 hex characters.
 
-- `keygen -t hex -l 32 -c lower` generates 32 hex characters.
-- `openssl rand -hex 32` generates 32 random bytes and prints them as hex. Each byte becomes two hex characters, so the output is 64 hex characters.
-
-Use `keygen jwt` or `keygen secret` when you want the exact `openssl rand -hex 32` behavior.
+  Use `keygen jwt` or `keygen secret` when you want the exact `openssl rand -hex 32` behavior.
+</details>
 
 ## License
 
-MIT.
+MIT. See [LICENSE](LICENSE).
