@@ -4,16 +4,9 @@
 # Requires: bash, od, tr. Optional: uuidgen, curl or wget.
 #
 # Wordlist resolution order (memorable mode):
-#   1. URL ($KEYGEN_WORDLIST_URL), cached on first download
-#   2. Local file ($KEYGEN_WORDLIST_PATH, installed share, bundled wordlist, or XDG cache)
+#   1. URL ($REMOTE_WORDLIST_URL), cached on first download
+#   2. Local file ($LOCAL_WORDLIST_PATH, installed share, bundled wordlist, or XDG cache)
 #   3. Built-in fallback list
-#
-# Environment variables:
-#   KEYGEN_WORDLIST_URL      Source URL for the wordlist.
-#   KEYGEN_WORDLIST_PATH     Local file used as cache and fallback.
-#                              Default: installed/bundled wordlist, then XDG cache
-#   KEYGEN_MIN_WORD_LEN      Minimum word length to accept. Default: 3
-#   KEYGEN_WORDLIST_TIMEOUT  Download timeout in seconds. Default: 5
 #
 # Delete the cache file to force a fresh download on next run.
 
@@ -33,31 +26,60 @@ APP_VERSION="1.0.0"
 LOCAL_META_PATH="$SCRIPT_DIR/.meta"
 REMOTE_META_URL="${KEYGEN_META_URL:-https://raw.githubusercontent.com/yonasuriv/${APP_NAME}/refs/heads/main/.meta}"
 REMOTE_SCRIPT_URL="${KEYGEN_SCRIPT_URL:-https://raw.githubusercontent.com/yonasuriv/${APP_NAME}/refs/heads/main/${APP_NAME}.sh}"
-REMOTE_WORDLIST_URL="${KEYGEN_WORDLIST_URL:-https://raw.githubusercontent.com/yonasuriv/${APP_NAME}/refs/heads/main/wordlist/en-memorable.txt}"
+REMOTE_WORDLIST_URL="${REMOTE_WORDLIST_URL:-https://raw.githubusercontent.com/yonasuriv/${APP_NAME}/refs/heads/main/wordlist/en-memorable.txt}"
 
+INSTALL_TARGET_CUSTOM="false"
 if [[ -n "${PREFIX:-}" ]]; then
   INSTALL_PREFIX="$PREFIX"
-elif [[ -d "$SCRIPT_DIR/../share/${APP_NAME}" ]]; then
-  INSTALL_PREFIX="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
+  INSTALL_TARGET_CUSTOM="true"
+elif (( EUID == 0 )); then
+  INSTALL_PREFIX="/usr"
 else
-  INSTALL_PREFIX="/usr/local"
+  INSTALL_PREFIX="${HOME}/.local"
 fi
+[[ -n "${KEYGEN_BIN_DIR:-}" || -n "${KEYGEN_SHARE_DIR:-}" ]] && INSTALL_TARGET_CUSTOM="true"
 INSTALL_BIN_DIR="${KEYGEN_BIN_DIR:-$INSTALL_PREFIX/bin}"
 INSTALL_SHARE_DIR="${KEYGEN_SHARE_DIR:-$INSTALL_PREFIX/share/$APP_NAME}"
 INSTALL_CONFIG_DIR="$INSTALL_SHARE_DIR/config"
 INSTALL_WORDLIST_DIR="$INSTALL_SHARE_DIR/wordlist"
 INSTALLED_META_PATH="$INSTALL_SHARE_DIR/.meta"
+DEFAULT_CONFIG_PATH="$SCRIPT_DIR/config/default.conf"
 
-TYPE="random"
-LENGTH=16
-WORDS=3
-CASE_MODE="upper"
-ALLOW="letters,numbers"
-SEPARATOR="hyphen"
-COUNT=1
-PLAIN="false"
-SPINNER="true"
+# Configurable defaults are loaded from the default conf file.
+# These empty initializations satisfy set -u; emergency fallbacks are applied
+# by set_config_defaults() only if the configs do not set a value.
+TYPE=""
+LENGTH=""
+MEMO_WORDS=""
+CASE=""
+ALLOW=""
+MEMO_SEPARATOR=""
+COUNT=""
+PLAIN=""
+SPINNER=""
 ACTION="generate"
+MEMO_CAPITALIZE=""
+MEMO_NUM_PER_WORD=""
+SAFE_MODE=""
+
+set_config_defaults() {
+  [[ -z "$TYPE" ]] && TYPE="random"
+  [[ -z "$LENGTH" ]] && LENGTH=16
+  [[ -z "$MEMO_WORDS" ]] && MEMO_WORDS=3
+  [[ -z "$CASE" ]] && CASE="default"
+  [[ -z "$ALLOW" ]] && ALLOW="letters,numbers"
+  [[ -z "$MEMO_SEPARATOR" ]] && MEMO_SEPARATOR="hyphen"
+  [[ -z "$COUNT" ]] && COUNT=1
+  [[ -z "$PLAIN" ]] && PLAIN="false"
+  [[ -z "$SPINNER" ]] && SPINNER="true"
+  [[ -z "$MEMO_CAPITALIZE" ]] && MEMO_CAPITALIZE="true"
+  [[ -z "$MEMO_NUM_PER_WORD" ]] && MEMO_NUM_PER_WORD="true"
+  [[ -z "$SAFE_MODE" ]] && SAFE_MODE="false"
+  [[ -z "${REMOTE_WORDLIST_MIN_LEN:-}" ]] && REMOTE_WORDLIST_MIN_LEN=4
+  [[ -z "${REMOTE_WORDLIST_TIMEOUT:-}" ]] && REMOTE_WORDLIST_TIMEOUT=5
+
+  return 0
+}
 
 SPINNER_PID=""
 
@@ -83,57 +105,84 @@ HARDCODED_WORDS=(
   storm swift tiger tulip vapor vivid wave whale zenith
 )
 
+# Color Variables
+BOLD=$'\033[1m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[0;33m'
+RED=$'\033[0;31m'
+BLUE=$'\033[0;34m'
+CYAN=$'\033[1;36m'
+RESET=$'\033[0m'
+
 usage() {
   local cmd="${0##*/}"
   cmd="${cmd%.sh}"
 
   cat <<EOF
-$cmd - secure password/key generator
 
 Usage:
-  $cmd [options]
-  $cmd jwt|secret|appkey|django
+  $cmd [type] [options]
   $cmd --safe
 
 Options:
-  -t, --type TYPE          random | memorable | uuid | hex | base64 | base64url | base32 | base58 | nanoid
-                           Default: random
-  -l, --length N           Length for random/key formats. Min 8, max 32. Default: 16
-  -w, --words N            Words for memorable mode. Min 1, max 10. Default: 3
-  -c, --case MODE          lower | upper | capitalize. Default: upper
-  -a, --allow LIST         Comma list: letters,numbers,symbols,hyphen,space,period,comma,underscore,all
-                           Default: letters,numbers
-  -s, --separator SEP      hyphen | space | period | comma | underscore | none. Used by memorable mode.
-                           Default: hyphen
-  -n, --count N            Number of values to generate. Default: 1
-      --safe               URL-safe 32-byte base64 secret without padding.
-      --plain              Print generated values only. No color, box, labels, or spinner.
-      --no-spinner         Disable spinner.
-  -v, --version            Print current version and check for updates.
-  -u, --update             Update the installed or local script from GitHub.
-  -i, --install            Install keygen under /usr/local by default.
-  -h, --help               Show this help.
+      --safe              Generate a .env-friendly and URL-safe value using the A-Za-z0-9._~- charset.
 
-Special commands:
-  jwt                      Equivalent to: openssl rand -hex 32
-  secret                   Equivalent to: openssl rand -hex 32
-  appkey                   Equivalent to: openssl rand -base64 32
-  django                   Equivalent to: openssl rand -base64 50 | tr -dc 'A-Za-z0-9!@#\$%^&*(-_=+)'
+  -t, --type VALUE        Output mode.
+                          Values: random, memorable, uuid, hex, base32, base58, base64, base64url, nanoid, token, {special types}
+                          Default: random
+
+  -c, --case VALUE        Letter casing for generated output.
+                          Values: default, lower, upper, capitalize
+                          Default: default
+
+  -l, --length N          Length for random and key-based formats.
+                          Range: 8-64
+                          Default: 16
+
+  -w, --words N           Number of words for memorable passwords.
+                          Range: 1-10
+                          Default: 3
+
+  -s, --separator VALUE   Word separator for memorable mode.
+                          Values: hyphen, space, period, comma, underscore, none
+                          Default: hyphen
+
+  -a, --allow VALUE       Comma-separated character classes to include.
+                          Values: letters,numbers,symbols,hyphen,space,period,comma,underscore,all
+                          Default: letters,numbers
+
+  -n, --count N           Number of values to generate.
+                          Default: 1
+
+  -v, --version           Print the current version and check for updates.
+  -u, --update            Update the installed or local script from GitHub.
+  -i, --install           Install keygen. Uses /usr when run as root, otherwise ~/.local.
+  -p, --plain             Print generated values only. Disables colors, boxes, and labels.
+      --no-spinner        Disable the progress spinner.
+  -h, --help              Show this help message.
+
+Special types:
+  jwt                     Generate a JWT secret.
+  secret                  Generate a general-purpose secret.
+  appkey                  Generate a Base64 application key.
+  token                   Generate a URL-safe 32-byte Base64 secret without padding.
+  django                  Generate a Django-style secret key.
 
 Environment (memorable mode):
-  KEYGEN_WORDLIST_URL      Source URL. Default: project wordlist on GitHub
-  KEYGEN_WORDLIST_PATH     Local cache/fallback. Default: installed/bundled wordlist, then XDG cache
-  KEYGEN_MIN_WORD_LEN      Minimum word length. Default: 3
-  KEYGEN_WORDLIST_TIMEOUT  Download timeout (seconds). Default: 5
+  REMOTE_WORDLIST_URL      Source URL. Default: project wordlist on GitHub
+  LOCAL_WORDLIST_PATH     Local cache/fallback. Default: installed/bundled wordlist, then XDG cache
+  REMOTE_WORDLIST_MIN_LEN      Minimum word length. Default: 4
+  REMOTE_WORDLIST_TIMEOUT  Download timeout (seconds). Default: 5
 
 Install/update environment:
-  PREFIX                     Install prefix. Default: /usr/local
+  PREFIX                     Install prefix. Default: /usr as root, otherwise ~/.local
   KEYGEN_BIN_DIR             Override binary directory.
   KEYGEN_SHARE_DIR           Override shared data directory.
 
 Examples:
   $cmd
   $cmd jwt
+  $cmd base64
   $cmd --safe --plain
   $cmd --length 24 --allow letters,numbers,symbols
   $cmd --type memorable --words 4 --case capitalize --separator hyphen
@@ -147,7 +196,7 @@ has_command() {
 }
 
 fatal() {
-  printf 'error: %s\n' "$1" >&2
+  printf '%bERROR%b: %s\n' "$RED" "$RESET" "$1" >&2
   exit 1
 }
 
@@ -172,6 +221,12 @@ init_app_version() {
   if version="$(read_meta_version "$LOCAL_META_PATH")"; then
     APP_VERSION="$version"
   elif version="$(read_meta_version "$INSTALLED_META_PATH")"; then
+    APP_VERSION="$version"
+  elif version="$(read_meta_version "$SCRIPT_DIR/../share/$APP_NAME/.meta")"; then
+    APP_VERSION="$version"
+  elif version="$(read_meta_version "/usr/share/$APP_NAME/.meta")"; then
+    APP_VERSION="$version"
+  elif version="$(read_meta_version "${HOME}/.local/share/$APP_NAME/.meta")"; then
     APP_VERSION="$version"
   fi
 }
@@ -240,27 +295,218 @@ print_version() {
 }
 
 load_user_config() {
-  local config="$INSTALL_CONFIG_DIR/keygen.conf"
-  [[ -r "$config" ]] || return 0
-  # User-owned shell-style configuration for KEYGEN_* and KEYGEN_* variables.
-  # shellcheck source=/usr/local/share/keygen/config/keygen.conf
-  source "$config"
+  local default_config="" user_config=""
+
+  # Search for default.conf
+  for config in \
+    "$INSTALL_CONFIG_DIR/default.conf" \
+    "$SCRIPT_DIR/config/default.conf" \
+    "$SCRIPT_DIR/../share/$APP_NAME/config/default.conf" \
+    "/usr/share/$APP_NAME/config/default.conf" \
+    "/usr/local/share/$APP_NAME/config/default.conf" \
+    "${HOME}/.local/share/$APP_NAME/config/default.conf"
+  do
+    [[ -r "$config" ]] || continue
+    default_config="$config"
+    break
+  done
+
+  # Search for user.conf
+  for config in \
+    "$INSTALL_CONFIG_DIR/user.conf" \
+    "$SCRIPT_DIR/config/user.conf" \
+    "$SCRIPT_DIR/../share/$APP_NAME/config/user.conf" \
+    "/usr/share/$APP_NAME/config/user.conf" \
+    "/usr/local/share/$APP_NAME/config/user.conf" \
+    "${HOME}/.local/share/$APP_NAME/config/user.conf"
+  do
+    [[ -r "$config" ]] || continue
+    user_config="$config"
+    break
+  done
+
+  # Load default.conf first
+  if [[ -n "$default_config" ]]; then
+    # shellcheck source=/dev/null
+    source "$default_config"
+  fi
+
+  # Load user.conf second (overrides defaults)
+  if [[ -n "$user_config" ]]; then
+    # shellcheck source=/dev/null
+    source "$user_config"
+  fi
+
+  return 0
+}
+
+config_bool() {
+  local name="$1"
+  local value="${2,,}"
+
+  case "$value" in
+    true|1|yes|on) printf 'true' ;;
+    false|0|no|off) printf 'false' ;;
+    *) fatal "$name must be true or false" ;;
+  esac
+}
+
+normalize_config() {
+  # Normalize values loaded from config files
+  [[ -n "${TYPE:-}" ]] && TYPE="${TYPE,,}"
+  [[ -n "${CASE:-}" ]] && CASE="${CASE,,}"
+  [[ -n "${MEMO_SEPARATOR:-}" ]] && MEMO_SEPARATOR="${MEMO_SEPARATOR,,}"
+
+  [[ -n "${PLAIN:-}" ]] && PLAIN="$(config_bool PLAIN "$PLAIN")"
+  [[ -n "${SPINNER:-}" ]] && SPINNER="$(config_bool SPINNER "$SPINNER")"
+  [[ -n "${MEMO_CAPITALIZE:-}" ]] && MEMO_CAPITALIZE="$(config_bool MEMO_CAPITALIZE "$MEMO_CAPITALIZE")"
+  [[ -n "${MEMO_NUM_PER_WORD:-}" ]] && MEMO_NUM_PER_WORD="$(config_bool MEMO_NUM_PER_WORD "$MEMO_NUM_PER_WORD")"
+
+  # Lowercase environment fallbacks
+  [[ ${type+x} ]] && TYPE="${type,,}"
+  [[ ${length+x} ]] && LENGTH="$length"
+  [[ ${memo_words+x} ]] && MEMO_WORDS="$memo_words"
+  [[ ${CASE+x} ]] && CASE="${CASE,,}"
+  [[ ${allow+x} ]] && ALLOW="$allow"
+  [[ ${memo_separator+x} ]] && MEMO_SEPARATOR="${memo_separator,,}"
+  [[ ${count+x} ]] && COUNT="$count"
+  [[ ${plain+x} ]] && PLAIN="$(config_bool plain "$plain")"
+  [[ ${spinner+x} ]] && SPINNER="$(config_bool spinner "$spinner")"
+  [[ ${memo_capitalize+x} ]] && MEMO_CAPITALIZE="$(config_bool memo_capitalize "$memo_capitalize")"
+  [[ ${memo_num_per_word+x} ]] && MEMO_NUM_PER_WORD="$(config_bool memo_num_per_word "$memo_num_per_word")"
+  [[ ${REMOTE_WORDLIST_MIN_LEN+x} ]] && REMOTE_WORDLIST_MIN_LEN="$REMOTE_WORDLIST_MIN_LEN"
+  [[ ${remote_wordlist_url+x} ]] && REMOTE_WORDLIST_URL="$remote_wordlist_url"
+  [[ ${local_wordlist_path+x} ]] && LOCAL_WORDLIST_PATH="$local_wordlist_path"
+  [[ ${remote_wordlist_timeout+x} ]] && REMOTE_WORDLIST_TIMEOUT="$remote_wordlist_timeout"
+
+  return 0
+}
+
+install_scope() {
+  if (( EUID == 0 )); then
+    printf 'sudo'
+  else
+    printf 'normal user'
+  fi
+}
+
+confirm_install() {
+  local scope
+  scope="$(install_scope)"
+
+  printf '\nYou are running this command as %s.\n' "$scope"
+  printf '\nThis will install %s to:\n' "$APP_NAME"
+  printf '\n  Binary: %s/keygen\n' "$INSTALL_BIN_DIR"
+  printf '  Shared data: %s\n' "$INSTALL_SHARE_DIR"
+  printf '\nContinue? [Y/n] '
+
+  if [[ ! -t 0 ]]; then
+    printf '\n'
+    fatal "Installation requires confirmation from an interactive shell"
+  fi
+
+  local answer
+  IFS= read -r answer
+  case "${answer,,}" in
+    y|yes) ;;
+    *) fatal "Installation cancelled" ;;
+  esac
+}
+
+installation_candidates() {
+  printf '%s\n' \
+    "/usr/bin/keygen|system binary" \
+    "/usr/share/keygen|system shared data" \
+    "/usr/local/bin/keygen|legacy system binary" \
+    "/usr/local/share/keygen|legacy system shared data" \
+    "${HOME}/.local/bin/keygen|user binary" \
+    "${HOME}/.local/share/keygen|user shared data"
+}
+
+check_existing_installations() {
+  [[ "$INSTALL_TARGET_CUSTOM" == "true" ]] && return 0
+
+  local target_bin="$INSTALL_BIN_DIR/keygen"
+  local existing=()
+  local candidate path label
+
+  while IFS= read -r candidate; do
+    path="${candidate%%|*}"
+    label="${candidate#*|}"
+
+    [[ "$path" == "$target_bin" || "$path" == "$INSTALL_SHARE_DIR" ]] && continue
+    [[ -e "$path" ]] && existing+=("$label: $path")
+  done < <(installation_candidates)
+
+  if ((${#existing[@]} > 0)); then
+    printf 'Existing installation found outside the selected target:\n' >&2
+    for candidate in "${existing[@]}"; do
+      printf '  %s\n' "$candidate" >&2
+    done
+    fatal "Remove the existing installation or set PREFIX/KEYGEN_BIN_DIR/KEYGEN_SHARE_DIR intentionally"
+  fi
+}
+
+install_default_config() {
+  local dest_default="$INSTALL_CONFIG_DIR/default.conf"
+  local dest_user="$INSTALL_CONFIG_DIR/user.conf"
+
+  # Install default.conf if not present
+  if [[ ! -f "$dest_default" ]]; then
+    local source=""
+    local candidate
+    for candidate in \
+      "$DEFAULT_CONFIG_PATH" \
+      "$INSTALL_SHARE_DIR/default.conf" \
+      "$SCRIPT_DIR/../share/$APP_NAME/default.conf"
+    do
+      if [[ -f "$candidate" ]]; then
+        source="$candidate"
+        break
+      fi
+    done
+
+    [[ -n "$source" ]] || fatal "default config not found"
+    install -m 0644 "$source" "$dest_default"
+  fi
+
+  # Install user.conf if not present
+  if [[ ! -f "$dest_user" ]]; then
+    local user_source=""
+    local user_candidate
+    for user_candidate in \
+      "$SCRIPT_DIR/config/user.conf" \
+      "$SCRIPT_DIR/../share/$APP_NAME/config/user.conf" \
+      "$INSTALL_SHARE_DIR/config/user.conf"
+    do
+      if [[ -f "$user_candidate" ]]; then
+        user_source="$user_candidate"
+        break
+      fi
+    done
+
+    if [[ -n "$user_source" ]]; then
+      install -m 0644 "$user_source" "$dest_user"
+    fi
+  fi
 }
 
 install_keygen() {
   init_app_version
 
+  check_existing_installations
+  confirm_install
+
   mkdir -p "$INSTALL_BIN_DIR" "$INSTALL_CONFIG_DIR" "$INSTALL_WORDLIST_DIR"
   install -m 0755 "$(script_target_path)" "$INSTALL_BIN_DIR/keygen"
 
-  if [[ ! -f "$INSTALL_CONFIG_DIR/keygen.conf" ]]; then
-    cat > "$INSTALL_CONFIG_DIR/keygen.conf" <<'EOF'
-# keygen user configuration
-# Uncomment and adjust values as needed.
-# KEYGEN_MIN_WORD_LEN=3
-# KEYGEN_WORDLIST_TIMEOUT=5
-EOF
+  if [[ -f "$DEFAULT_CONFIG_PATH" ]]; then
+    install -m 0644 "$DEFAULT_CONFIG_PATH" "$INSTALL_SHARE_DIR/default.conf"
+  elif [[ -f "$SCRIPT_DIR/../share/$APP_NAME/default.conf" ]]; then
+    install -m 0644 "$SCRIPT_DIR/../share/$APP_NAME/default.conf" "$INSTALL_SHARE_DIR/default.conf"
   fi
+
+  install_default_config
 
   if [[ -f "$SCRIPT_DIR/wordlist/en-memorable.txt" && ! -f "$INSTALL_WORDLIST_DIR/en-memorable.txt" ]]; then
     install -m 0644 "$SCRIPT_DIR/wordlist/en-memorable.txt" "$INSTALL_WORDLIST_DIR/en-memorable.txt"
@@ -281,7 +527,7 @@ update_keygen() {
 
   local remote
   if ! remote="$(fetch_remote_version)"; then
-    fatal "could not check remote version"
+    fatal "Could not check remote version"
   fi
 
   if ! version_is_newer "$remote" "$APP_VERSION"; then
@@ -290,19 +536,19 @@ update_keygen() {
   fi
 
   local tmp_script tmp_meta target meta_target
-  tmp_script="$(mktemp "${TMPDIR:-/tmp}/keygen-script.XXXXXX")" || fatal "could not create temporary file"
+  tmp_script="$(mktemp "${TMPDIR:-/tmp}/keygen-script.XXXXXX")" || fatal "Could not create temporary file"
   tmp_meta="$(mktemp "${TMPDIR:-/tmp}/keygen-meta.XXXXXX")" || {
     rm -f "$tmp_script" 2>/dev/null || true
-    fatal "could not create temporary file"
+    fatal "Could not create temporary file"
   }
 
   if ! download_to_file "$REMOTE_SCRIPT_URL" "$tmp_script" 30; then
     rm -f "$tmp_script" "$tmp_meta" 2>/dev/null || true
-    fatal "could not download update"
+    fatal "Could not download update"
   fi
   if ! download_to_file "$REMOTE_META_URL" "$tmp_meta" 30; then
     rm -f "$tmp_script" "$tmp_meta" 2>/dev/null || true
-    fatal "could not download update metadata"
+    fatal "Could not download update metadata"
   fi
 
   target="$(script_target_path)"
@@ -316,7 +562,7 @@ update_keygen() {
   install -m 0644 "$tmp_meta" "$meta_target"
   rm -f "$tmp_script" "$tmp_meta" 2>/dev/null || true
 
-  printf 'updated %s from %s to %s\n' "$APP_NAME" "$APP_VERSION" "$remote"
+  printf 'Updated %s from %s to %s\n' "$APP_NAME" "$APP_VERSION" "$remote"
 }
 
 contains_allow() {
@@ -346,7 +592,7 @@ normalize_allow() {
       alnum) out+=("letters" "numbers") ;;
       all) out+=("letters" "numbers" "symbols" "hyphen" "space" "period" "comma" "underscore") ;;
       "") ;;
-      *) fatal "unsupported allow token: $item" ;;
+      *) fatal "Unsupported allow token: $item" ;;
     esac
   done
 
@@ -368,91 +614,85 @@ normalize_allow() {
 
 validate_args() {
   case "$TYPE" in
-    random|memorable|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|appkey|django|safe) ;;
-    *) fatal "unsupported type: $TYPE" ;;
+    random|memorable|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|secret|appkey|django|token) ;;
+    *) fatal "Unsupported type: $TYPE" ;;
   esac
 
-  case "$CASE_MODE" in
-    lower|upper|capitalize) ;;
-    *) fatal "unsupported case mode: $CASE_MODE" ;;
+  case "$CASE" in
+    default|lower|upper|capitalize) ;;
+    *) fatal "Unsupported case mode: $CASE" ;;
   esac
 
-  case "$SEPARATOR" in
+  case "$MEMO_SEPARATOR" in
     hyphen|space|period|comma|underscore|none) ;;
-    *) fatal "unsupported separator: $SEPARATOR" ;;
+    *) fatal "Unsupported separator: $MEMO_SEPARATOR" ;;
   esac
 
   is_integer "$LENGTH" || fatal "--length must be an integer"
-  is_integer "$WORDS" || fatal "--words must be an integer"
+  is_integer "$MEMO_WORDS" || fatal "--words must be an integer"
   is_integer "$COUNT" || fatal "--count must be an integer"
 
-  (( LENGTH >= 8 && LENGTH <= 32 )) || fatal "--length must be between 8 and 32"
-  (( WORDS >= 1 && WORDS <= 10 )) || fatal "--words must be between 1 and 10"
+  (( LENGTH >= 8 && LENGTH <= 64 )) || fatal "--length must be between 8 and 64"
+  (( MEMO_WORDS >= 1 && MEMO_WORDS <= 10 )) || fatal "--words must be between 1 and 10"
   (( COUNT >= 1 && COUNT <= 100 )) || fatal "--count must be between 1 and 100"
 
   ALLOW="$(normalize_allow "$ALLOW")"
+
+  if [[ "$TYPE" == "memorable" && "$MEMO_CAPITALIZE" == "true" && "$CASE" == "default" ]]; then
+    CASE="capitalize"
+  fi
 }
 
 parse_args() {
+  local type_set="false"
+
   while (($#)); do
     case "$1" in
-      jwt|secret)
-        TYPE="jwt"
-        CASE_MODE="lower"
-        PLAIN="true"
-        SPINNER="false"
-        ;;
-      appkey)
-        TYPE="appkey"
-        PLAIN="true"
-        SPINNER="false"
-        ;;
-      django)
-        TYPE="django"
-        PLAIN="true"
-        SPINNER="false"
+      random|memorable|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|secret|appkey|django|safe|token)
+        [[ "$type_set" == "false" ]] || fatal "Multiple output types provided"
+        TYPE="$1"
+        type_set="true"
         ;;
       -t|--type)
-        shift || fatal "missing value for --type"
+        shift || fatal "Missing value for --type"
         TYPE="${1,,}"
+        type_set="true"
         ;;
-      --type=*) TYPE="${1#*=}"; TYPE="${TYPE,,}" ;;
+      --type=*) TYPE="${1#*=}"; TYPE="${TYPE,,}"; type_set="true" ;;
       -l|--length)
-        shift || fatal "missing value for --length"
+        shift || fatal "Missing value for --length"
         LENGTH="$1"
         ;;
       --length=*) LENGTH="${1#*=}" ;;
       -w|--words)
-        shift || fatal "missing value for --words"
-        WORDS="$1"
+        shift || fatal "Missing value for --words"
+        MEMO_WORDS="$1"
         ;;
-      --words=*) WORDS="${1#*=}" ;;
+      --words=*) MEMO_WORDS="${1#*=}" ;;
       -c|--case)
         shift || fatal "missing value for --case"
-        CASE_MODE="${1,,}"
+        CASE="${1,,}"
         ;;
-      --case=*) CASE_MODE="${1#*=}"; CASE_MODE="${CASE_MODE,,}" ;;
+      --case=*) CASE="${1#*=}"; CASE="${CASE,,}" ;;
       -a|--allow)
-        shift || fatal "missing value for --allow"
+        shift || fatal "Missing value for --allow"
         ALLOW="$1"
         ;;
       --allow=*) ALLOW="${1#*=}" ;;
       -s|--separator|--sep)
-        shift || fatal "missing value for --separator"
-        SEPARATOR="${1,,}"
+        shift || fatal "Missing value for --separator"
+        MEMO_SEPARATOR="${1,,}"
         ;;
-      --separator=*|--sep=*) SEPARATOR="${1#*=}"; SEPARATOR="${SEPARATOR,,}" ;;
+      --separator=*|--sep=*) MEMO_SEPARATOR="${1#*=}"; MEMO_SEPARATOR="${MEMO_SEPARATOR,,}" ;;
       -n|--count)
-        shift || fatal "missing value for --count"
+        shift || fatal "Missing value for --count"
         COUNT="$1"
         ;;
       --count=*) COUNT="${1#*=}" ;;
       --safe)
-        TYPE="safe"
-        PLAIN="true"
-        SPINNER="false"
+        SAFE_MODE="true"
         ;;
-      --plain)
+      -p|--plain)
         PLAIN="true"
         SPINNER="false"
         ;;
@@ -468,6 +708,9 @@ parse_args() {
       -i|--install)
         ACTION="install"
         ;;
+      -i|--uninstall)
+        ACTION="uninstall"
+        ;;
       -h|--help)
         usage
         exit 0
@@ -477,7 +720,15 @@ parse_args() {
         break
         ;;
       *)
-        fatal "unknown option: $1"
+        if [[ "$1" == -* ]]; then
+          fatal "Unknown option: $1"
+        fi
+        if [[ "$type_set" == "false" ]]; then
+          TYPE="${1,,}"
+          type_set="true"
+        else
+          fatal "Unexpected argument: $1"
+        fi
         ;;
     esac
     shift
@@ -547,7 +798,7 @@ random_byte() {
 # Reads as many random bytes as needed to cover max (supports up to ~2^32).
 pick_index() {
   local max="$1"
-  (( max >= 1 )) || fatal "internal random bound out of range: $max"
+  (( max >= 1 )) || fatal "Internal random bound out of range: $max"
 
   local cap byte_count
   if (( max <= 256 )); then
@@ -589,7 +840,7 @@ random_token() {
   local out=""
   local i
 
-  ((${#alphabet} > 0)) || fatal "generated charset is empty"
+  ((${#alphabet} > 0)) || fatal "Generated charset is empty"
 
   for ((i = 0; i < length; i++)); do
     out+="$(pick_char "$alphabet")"
@@ -604,7 +855,7 @@ random_token() {
 fetch_wordlist() {
   local url="$1"
   local dest="$2"
-  local timeout="${KEYGEN_WORDLIST_TIMEOUT:-5}"
+  local timeout="${REMOTE_WORDLIST_TIMEOUT:-5}"
   is_integer "$timeout" || timeout=5
 
   local dir
@@ -634,13 +885,17 @@ fetch_wordlist() {
 }
 
 wordlist_path_candidates() {
-  if [[ -n "${KEYGEN_WORDLIST_PATH:-}" ]]; then
-    printf '%s\n' "$KEYGEN_WORDLIST_PATH"
+  if [[ -n "${LOCAL_WORDLIST_PATH:-}" ]]; then
+    printf '%s\n' "$LOCAL_WORDLIST_PATH"
     return 0
   fi
 
   printf '%s\n' \
     "$INSTALL_WORDLIST_DIR/en-memorable.txt" \
+    "$SCRIPT_DIR/../share/$APP_NAME/wordlist/en-memorable.txt" \
+    "/usr/share/$APP_NAME/wordlist/en-memorable.txt" \
+    "/usr/local/share/$APP_NAME/wordlist/en-memorable.txt" \
+    "${HOME}/.local/share/$APP_NAME/wordlist/en-memorable.txt" \
     "$SCRIPT_DIR/wordlist/en-memorable.txt" \
     "$DEFAULT_WORDLIST_PATH"
 }
@@ -683,12 +938,12 @@ load_words_from_hardcoded() {
 ensure_wordlist() {
   [[ "$WORDS_LOADED" == "true" ]] && return 0
 
-  local min_len="${KEYGEN_MIN_WORD_LEN:-3}"
-  is_integer "$min_len" || fatal "KEYGEN_MIN_WORD_LEN must be a positive integer"
-  (( min_len >= 1 )) || fatal "KEYGEN_MIN_WORD_LEN must be >= 1"
+  local min_len="${REMOTE_WORDLIST_MIN_LEN:-4}"
+  is_integer "$min_len" || fatal "REMOTE_WORDLIST_MIN_LEN must be a positive integer"
+  (( min_len >= 1 )) || fatal "REMOTE_WORDLIST_MIN_LEN must be >= 1"
 
-  local url="${KEYGEN_WORDLIST_URL:-$DEFAULT_WORDLIST_URL}"
-  local path="${KEYGEN_WORDLIST_PATH:-$DEFAULT_WORDLIST_PATH}"
+  local url="${REMOTE_WORDLIST_URL:-$DEFAULT_WORDLIST_URL}"
+  local path="${LOCAL_WORDLIST_PATH:-$DEFAULT_WORDLIST_PATH}"
   local candidate
 
   # Step 1: read from an explicit, installed, bundled, or cached wordlist.
@@ -716,13 +971,14 @@ ensure_wordlist() {
     return 0
   fi
 
-  fatal "no words available with KEYGEN_MIN_WORD_LEN=$min_len"
+  fatal "No words available with REMOTE_WORDLIST_MIN_LEN=$min_len"
 }
 
 # --- Generators ---------------------------------------------------------------
 
 letter_charset() {
-  case "$CASE_MODE" in
+  case "$CASE" in
+    default) printf 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' ;;
     lower) printf 'abcdefghijklmnopqrstuvwxyz' ;;
     upper) printf 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' ;;
     capitalize) printf 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' ;;
@@ -730,6 +986,11 @@ letter_charset() {
 }
 
 build_random_charset() {
+  if [[ "$SAFE_MODE" == "true" ]]; then
+    printf 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~'
+    return 0
+  fi
+
   local charset=""
 
   contains_allow "letters" && charset+="$(letter_charset)"
@@ -745,7 +1006,7 @@ build_random_charset() {
 }
 
 separator_value() {
-  case "$SEPARATOR" in
+  case "$MEMO_SEPARATOR" in
     hyphen) printf '-' ;;
     space) printf ' ' ;;
     period) printf '.' ;;
@@ -757,8 +1018,8 @@ separator_value() {
 
 format_word() {
   local word="$1"
-  case "$CASE_MODE" in
-    lower) printf '%s' "${word,,}" ;;
+  case "$CASE" in
+    default|lower) printf '%s' "${word,,}" ;;
     upper) printf '%s' "${word^^}" ;;
     capitalize)
       word="${word,,}"
@@ -776,17 +1037,20 @@ generate_memorable() {
 
   local out=""
   local idx word i
-  for ((i = 0; i < WORDS; i++)); do
+  for ((i = 0; i < MEMO_WORDS; i++)); do
     idx="$(pick_index "${#WORDS_LIST[@]}")"
     word="$(format_word "${WORDS_LIST[idx]}")"
+    if [[ "${MEMO_NUM_PER_WORD:-true}" == "true" ]] && contains_allow "numbers"; then
+      word+="$(random_token 2 '0123456789')"
+    fi
     out+="${out:+$sep}$word"
   done
 
-  if contains_allow "numbers"; then
+  if [[ "${MEMO_NUM_PER_WORD:-true}" != "true" ]] && contains_allow "numbers"; then
     out+="$sep$(random_token 2 '0123456789')"
   fi
 
-  if contains_allow "symbols"; then
+  if [[ "$SAFE_MODE" != "true" ]] && contains_allow "symbols"; then
     out+="$sep$(random_token 1 '!@#$%^&*?')"
   fi
 
@@ -812,8 +1076,8 @@ generate_uuid() {
     value="$(generate_uuid_v4_fallback)"
   fi
 
-  case "$CASE_MODE" in
-    lower|capitalize) printf '%s' "${value,,}" ;;
+  case "$CASE" in
+    default|lower|capitalize) printf '%s' "${value,,}" ;;
     upper) printf '%s' "${value^^}" ;;
   esac
 }
@@ -839,11 +1103,16 @@ generate_safe() {
 
 generate_django_secret() {
   openssl_required
-  LC_ALL=C openssl rand -base64 50 | tr -dc 'A-Za-z0-9!@#$%^&*(-_=+)'
+  LC_ALL=C openssl rand -base64 50 | tr -dc 'A-Za-z0-9!@#$%^&*()_=+-'
   printf '\n'
 }
 
 generate_value() {
+  if [[ "$SAFE_MODE" == "true" ]]; then
+    random_token "$LENGTH" 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~'
+    return 0
+  fi
+
   case "$TYPE" in
     random)
       random_token "$LENGTH" "$(build_random_charset)"
@@ -854,21 +1123,21 @@ generate_value() {
     uuid)
       generate_uuid
       ;;
-    jwt)
+    jwt|secret)
       generate_openssl_hex_32
       ;;
     appkey)
       generate_openssl_base64_32
       ;;
-    safe)
+    safe|token)
       generate_safe
       ;;
     django)
       generate_django_secret
       ;;
     hex)
-      case "$CASE_MODE" in
-        lower|capitalize) random_token "$LENGTH" '0123456789abcdef' ;;
+      case "$CASE" in
+        default|lower|capitalize) random_token "$LENGTH" '0123456789abcdef' ;;
         upper) random_token "$LENGTH" '0123456789ABCDEF' ;;
       esac
       ;;
@@ -879,9 +1148,9 @@ generate_value() {
       random_token "$LENGTH" 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-'
       ;;
     base32)
-      case "$CASE_MODE" in
+      case "$CASE" in
         lower|capitalize) random_token "$LENGTH" 'abcdefghijklmnopqrstuvwxyz234567' ;;
-        upper) random_token "$LENGTH" 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567' ;;
+        default|upper) random_token "$LENGTH" 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567' ;;
       esac
       ;;
     base58)
@@ -916,25 +1185,58 @@ render_box() {
   local key_value="$LENGTH"
   local width=57
 
-  if [[ "$TYPE" == "memorable" ]]; then
-    key_label="words"
-    key_value="$WORDS"
-  elif [[ "$TYPE" == "uuid" ]]; then
-    key_label="format"
-    key_value="RFC 4122 v4"
+  if [[ "$SAFE_MODE" == "true" ]]; then
+    key_label="length"
+    key_value="$LENGTH"
+  else
+    case "$TYPE" in
+      memorable)
+        key_label="words"
+        key_value="$MEMO_WORDS"
+        ;;
+      uuid)
+        key_label="format"
+        key_value="RFC 4122 v4"
+        ;;
+      jwt|secret)
+        key_label="format"
+        key_value="openssl rand -hex 32"
+        ;;
+      appkey)
+        key_label="format"
+        key_value="openssl rand -base64 32"
+        ;;
+      django)
+        key_label="format"
+        key_value="Django secret"
+        ;;
+      token)
+        key_label="format"
+        key_value="URL-safe base64"
+        ;;
+    esac
   fi
 
+  local mode_display="$TYPE"
+  [[ "$SAFE_MODE" == "true" ]] && mode_display="safe"
+
   local rows=(
-    "package|$APP_NAME v$APP_VERSION"
-    "mode|$TYPE"
+    "mode|$mode_display"
     "$key_label|$key_value"
-    "case|$CASE_MODE"
   )
 
-  if [[ "$TYPE" == "random" ]]; then
-    rows+=("allow|$ALLOW")
-  elif [[ "$TYPE" == "memorable" ]]; then
-    rows+=("separator|$SEPARATOR" "allow|$ALLOW")
+  if [[ "$SAFE_MODE" != "true" ]]; then
+    case "$TYPE" in
+      random|memorable|uuid|hex|base32)
+        rows+=("case|$CASE")
+        ;;
+    esac
+
+    if [[ "$TYPE" == "random" ]]; then
+      rows+=("allow|$ALLOW")
+    elif [[ "$TYPE" =~ ^(memorable|passphrase)$ ]]; then
+      rows+=("separator|$MEMO_SEPARATOR" "allow|$ALLOW")
+    fi
   fi
 
   local row label value visible
@@ -989,6 +1291,8 @@ render_box() {
 main() {
   init_app_version
   load_user_config
+  normalize_config
+  set_config_defaults
   parse_args "$@"
 
   case "$ACTION" in

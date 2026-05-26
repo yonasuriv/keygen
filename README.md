@@ -15,8 +15,16 @@ It uses `/dev/urandom` for built-in character generation and delegates the frame
 - One-shot shortcuts for JWT secrets, app keys, Django secrets, and URL-safe secrets
 - Version checks, self-update, and system install commands
 
+<p align="center">
+  <img width="424" height="281" alt="Keygen" src=".github/assets/example.png" />
+</p>
 
-### Installation
+> [!NOTE]
+> Installation is optional, but recommended for persistent aliases and global access.
+
+<!-- Installation -->
+<details>
+  <summary><b>Installation</b></summary>
 
 From the repository root:
 
@@ -24,12 +32,23 @@ From the repository root:
 ./keygen.sh --install
 ```
 
-By default this installs:
+The installer prompts before writing files. When run as root, it installs system-wide; when run as a normal user, it installs under your home directory.
 
-- Binary: `/usr/local/bin/keygen`
-- Shared data: `/usr/local/share/keygen`
-- Config: `/usr/local/share/keygen/config/keygen.conf`
-- Wordlists: `/usr/local/share/keygen/wordlist`
+System install:
+
+- Binary: `/usr/bin/keygen`
+- Shared data: `/usr/share/keygen`
+- Default config: `/usr/share/keygen/default.conf`
+- User config: `/usr/share/keygen/config/keygen.conf`
+- Wordlists: `/usr/share/keygen/wordlist`
+
+User install:
+
+- Binary: `~/.local/bin/keygen`
+- Shared data: `~/.local/share/keygen`
+- Default config: `~/.local/share/keygen/default.conf`
+- User config: `~/.local/share/keygen/config/keygen.conf`
+- Wordlists: `~/.local/share/keygen/wordlist`
 
 Use `PREFIX` to install somewhere else:
 
@@ -37,33 +56,7 @@ Use `PREFIX` to install somewhere else:
 PREFIX="$HOME/.local" ./keygen.sh --install
 ```
 
-The installer creates the config file and bundled wordlist only when they do not already exist, so local user settings and custom wordlists are preserved across updates.
-
-### Configuration
-
-The installed config file is a shell-style file:
-
-```sh
-# /usr/local/share/keygen/config/keygen.conf
-KEYGEN_MIN_WORD_LEN=3
-KEYGEN_WORDLIST_TIMEOUT=5
-```
-
-Environment variables still work for one-off overrides:
-
-```sh
-KEYGEN_MIN_WORD_LEN=5 keygen --type memorable
-```
-
-Memorable mode resolves wordlists in this order:
-
-1. `KEYGEN_WORDLIST_PATH`, if set
-2. Installed wordlist under `/usr/local/share/keygen/wordlist`
-3. Bundled repository wordlist under `wordlist/en-memorable.txt`
-4. Cached wordlist under `${XDG_CACHE_HOME:-$HOME/.cache}/keygen/wordlist.txt`
-5. Built-in fallback words
-
-If no usable local wordlist is found, `keygen` attempts to download the project wordlist and cache it.
+The installer checks common system and user locations before installing so you do not accidentally keep both a system and local copy. It creates the user config and bundled wordlist only when they do not already exist, so local settings and custom wordlists are preserved across updates.
 
 **Updates and version checks:**
 
@@ -74,44 +67,128 @@ keygen --update  # Downloads the latest stable version.
 ```
 
 Patch versions are bumped automatically on pushes to main branch that change core runtime files only.
+</details>
 
-### Usage
+<!-- Configuration -->
+<details>
+  <summary><b>Configuration</b></summary>
+  
+The installed config file is a shell-style file:
 
 ```sh
-keygen [options]
-keygen jwt
-keygen secret
-keygen appkey
-keygen django
-keygen --safe
+# ~/.local/share/keygen/config/keygen.conf
+plain=false
+spinner=true
+type=random
+length=16
+words=3
+CASE=default
+allow=letters,numbers
+separator=hyphen
+count=1
+MEMO_CAPITALIZE=false
+
+REMOTE_WORDLIST_MIN_LEN=3
+REMOTE_WORDLIST_TIMEOUT=5
 ```
+
+Environment variables still work for one-off overrides:
+
+```sh
+REMOTE_WORDLIST_MIN_LEN=5 keygen --type memorable
+```
+
+Memorable mode resolves wordlists in this order:
+
+1. `LOCAL_WORDLIST_PATH`, if set
+2. Installed wordlist under the selected shared data directory
+3. Bundled repository wordlist under `wordlist/en-memorable.txt`
+4. Cached wordlist under `${XDG_CACHE_HOME:-$HOME/.cache}/keygen/wordlist.txt`
+5. Built-in fallback words
+
+If no usable local wordlist is found, `keygen` attempts to download the project wordlist and cache it.
+</details>
+
+<!-- Usage -->
+<details>
+  <summary><b>Usage</b></summary>
 
 Run `keygen --help` for the full command reference.
 
-<details>
-  <summary><b>Examples</b></summary>
 
-```sh
-keygen
-keygen --length 24 --allow letters,numbers,symbols
-keygen --type memorable --words 4 --case capitalize --separator hyphen
-keygen --type uuid --count 3
-keygen --type base64url --length 32 --plain
-keygen jwt
-keygen --safe
+```txt
+Usage:
+  keygen [type] [options]
+  keygen --safe
+
+Options:
+      --safe              Generate a .env-friendly and URL-safe token.
+  
+  -t, --type VALUE        Output mode.
+                          Values: random, memorable, uuid, hex, base64, base64url, base32, base58, nanoid, token, {special types}
+                          Default: random
+
+  -c, --case VALUE        Letter casing for generated output.
+                          Values: default, lower, upper, capitalize
+                          Default: default
+
+  -l, --length N          Length for random and key-based formats.
+                          Range: 8-64
+                          Default: 16
+
+  -w, --words N           Number of words for memorable passwords.
+                          Range: 1-10
+                          Default: 3
+
+  -s, --separator VALUE   Word separator for memorable mode.
+                          Values: hyphen, space, period, comma, underscore, none
+                          Default: hyphen
+
+  -a, --allow VALUE       Comma-separated character classes to include.
+                          Values: letters,numbers,symbols,hyphen,space,period,comma,underscore,all
+                          Default: letters,numbers
+
+  -n, --count N           Number of values to generate.
+                          Default: 1
+
+  -v, --version           Print the current version and check for updates.
+  -u, --update            Update the installed or local script from GitHub.
+  -i, --install           Install keygen. Uses /usr when run as root, otherwise ~/.local.
+  -p, --plain             Print generated values only. Disables colors, boxes, and labels.
+      --no-spinner        Disable the progress spinner.
+  -h, --help              Show this help message.
+
+Special types:
+  jwt                     Generate a JWT secret.
+  secret                  Generate a general-purpose secret.
+  appkey                  Generate a Base64 application key.
+  token                   Generate a URL-safe 32-byte Base64 secret without padding.
+  django                  Generate a Django-style secret key.
+
+Environment (memorable mode):
+  REMOTE_WORDLIST_URL      Source URL. Default: project wordlist on GitHub
+  LOCAL_WORDLIST_PATH     Local cache/fallback. Default: installed/bundled wordlist, then XDG cache
+  REMOTE_WORDLIST_MIN_LEN      Minimum word length. Default: 3
+  REMOTE_WORDLIST_TIMEOUT  Download timeout (seconds). Default: 5
+
+Install/update environment:
+  PREFIX                     Install prefix. Default: /usr as root, otherwise ~/.local
+  KEYGEN_BIN_DIR             Override binary directory.
+  KEYGEN_SHARE_DIR           Override shared data directory.
+
+Examples:
+  keygen
+  keygen jwt
+  keygen --safe --plain
+  keygen --length 24 --allow letters,numbers,symbols
+  keygen base64
+  keygen --type memorable --words 4 --case capitalize --separator hyphen
+  keygen --type uuid --count 3
+  keygen --type base64url --length 32 --plain
 ```
-
-### Special Commands
-
-| Command | Equivalent command |
-| --- | --- |
-| `keygen jwt` | `openssl rand -hex 32` |
-| `keygen secret` | `openssl rand -hex 32` |
-| `keygen appkey` | `openssl rand -base64 32` |
-| `keygen django` | `openssl rand -base64 50 \| tr -dc 'A-Za-z0-9!@#$%^&*(-_=+)'` |
-| `keygen --safe` | `openssl rand -base64 32 \| tr '+/' '-_' \| tr -d '='` |
 </details>
 
+<!-- FAQ -->
 <details>
   <summary><b>FAQ</b></summary>
 
