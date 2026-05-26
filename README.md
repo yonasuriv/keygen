@@ -115,18 +115,12 @@ If no usable local wordlist is found, `keygen` attempts to download the project 
 
 Run `keygen --help` for the full command reference.
 
-
 ```txt
-Usage:
-  keygen [type] [options]
-  keygen --safe
-
 Options:
-      --safe              Generate a .env-friendly and URL-safe token.
-  
+      --safe              Generate a .env-friendly and URL-safe value using the A-Za-z0-9._~- charset.
+
   -t, --type VALUE        Output mode.
-                          Values: random, memorable, uuid, hex, base64, base64url, base32, base58, nanoid, token, {special types}
-                          Default: random
+                          Values: random, memorable, uuid, hex, base32, base58, base64, base64url, nanoid, token, {special types}
 
   -c, --case VALUE        Letter casing for generated output.
                           Values: default, lower, upper, capitalize
@@ -157,35 +151,32 @@ Options:
   -p, --plain             Print generated values only. Disables colors, boxes, and labels.
       --no-spinner        Disable the progress spinner.
   -h, --help              Show this help message.
+```
 
+Note: Supported types can be used directly without the --type flag, e.g. keygen jwt.
+
+```
 Special types:
   jwt                     Generate a JWT secret.
   secret                  Generate a general-purpose secret.
-  appkey                  Generate a Base64 application key.
+  general                 Generate a general-purpose secret key for apps, APIs, and services.
   token                   Generate a URL-safe 32-byte Base64 secret without padding.
   django                  Generate a Django-style secret key.
-
+```
+```
 Environment (memorable mode):
   REMOTE_WORDLIST_URL      Source URL. Default: project wordlist on GitHub
   LOCAL_WORDLIST_PATH     Local cache/fallback. Default: installed/bundled wordlist, then XDG cache
   REMOTE_WORDLIST_MIN_LEN      Minimum word length. Default: 3
   REMOTE_WORDLIST_TIMEOUT  Download timeout (seconds). Default: 5
-
+```
+```
 Install/update environment:
   PREFIX                     Install prefix. Default: /usr as root, otherwise ~/.local
   KEYGEN_BIN_DIR             Override binary directory.
   KEYGEN_SHARE_DIR           Override shared data directory.
-
-Examples:
-  keygen
-  keygen jwt
-  keygen --safe --plain
-  keygen --length 24 --allow letters,numbers,symbols
-  keygen base64
-  keygen --type memorable --words 4 --case capitalize --separator hyphen
-  keygen --type uuid --count 3
-  keygen --type base64url --length 32 --plain
 ```
+
 </details>
 
 <!-- FAQ -->

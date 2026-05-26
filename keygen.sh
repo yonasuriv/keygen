@@ -46,21 +46,22 @@ INSTALLED_META_PATH="$INSTALL_SHARE_DIR/.meta"
 DEFAULT_CONFIG_PATH="$SCRIPT_DIR/config/default.conf"
 
 # Configurable defaults are loaded from the default conf file.
-# These empty initializations satisfy set -u; emergency fallbacks are applied
-# by set_config_defaults() only if the configs do not set a value.
-TYPE=""
-LENGTH=""
-MEMO_WORDS=""
-CASE=""
-ALLOW=""
-MEMO_SEPARATOR=""
-COUNT=""
-PLAIN=""
-SPINNER=""
-ACTION="generate"
-MEMO_CAPITALIZE=""
-MEMO_NUM_PER_WORD=""
-SAFE_MODE=""
+# These initializations satisfy set -u while preserving environment variables.
+# Emergency fallbacks are applied by set_config_defaults() only if the configs
+# do not set a value.
+TYPE="${TYPE:-}"
+LENGTH="${LENGTH:-}"
+MEMO_WORDS="${MEMO_WORDS:-}"
+CASE="${CASE:-}"
+ALLOW="${ALLOW:-}"
+MEMO_SEPARATOR="${MEMO_SEPARATOR:-}"
+COUNT="${COUNT:-}"
+PLAIN="${PLAIN:-}"
+SPINNER="${SPINNER:-}"
+ACTION="${ACTION:-generate}"
+MEMO_CAPITALIZE="${MEMO_CAPITALIZE:-}"
+MEMO_NUM_PER_WORD="${MEMO_NUM_PER_WORD:-}"
+SAFE_MODE="${SAFE_MODE:-}"
 
 set_config_defaults() {
   [[ -z "$TYPE" ]] && TYPE="random"
@@ -164,15 +165,15 @@ Options:
 Special types:
   jwt                     Generate a JWT secret.
   secret                  Generate a general-purpose secret.
-  appkey                  Generate a Base64 application key.
+  general                 Generate a general-purpose secret key for apps, APIs, and services.
   token                   Generate a URL-safe 32-byte Base64 secret without padding.
   django                  Generate a Django-style secret key.
 
 Environment (memorable mode):
-  REMOTE_WORDLIST_URL      Source URL. Default: project wordlist on GitHub
-  LOCAL_WORDLIST_PATH     Local cache/fallback. Default: installed/bundled wordlist, then XDG cache
-  REMOTE_WORDLIST_MIN_LEN      Minimum word length. Default: 4
-  REMOTE_WORDLIST_TIMEOUT  Download timeout (seconds). Default: 5
+  LOCAL_WORDLIST_PATH        Local cache/fallback. Default: installed/bundled wordlist, then XDG cache
+  REMOTE_WORDLIST_URL        Source URL. Default: project wordlist on GitHub
+  REMOTE_WORDLIST_MIN_LEN    Minimum word length. Default: 4
+  REMOTE_WORDLIST_TIMEOUT    Download timeout (seconds). Default: 5
 
 Install/update environment:
   PREFIX                     Install prefix. Default: /usr as root, otherwise ~/.local
@@ -297,6 +298,27 @@ print_version() {
 load_user_config() {
   local default_config="" user_config=""
 
+  # Snapshot environment variables before config files can overwrite them
+  local _TYPE _LENGTH _MEMO_WORDS _CASE _ALLOW _MEMO_SEPARATOR _COUNT _PLAIN _SPINNER
+  local _MEMO_CAPITALIZE _MEMO_NUM_PER_WORD _SAFE_MODE _REMOTE_WORDLIST_MIN_LEN
+  local _REMOTE_WORDLIST_URL _LOCAL_WORDLIST_PATH _REMOTE_WORDLIST_TIMEOUT
+  [[ ${TYPE+x} ]] && _TYPE="$TYPE"
+  [[ ${LENGTH+x} ]] && _LENGTH="$LENGTH"
+  [[ ${MEMO_WORDS+x} ]] && _MEMO_WORDS="$MEMO_WORDS"
+  [[ ${CASE+x} ]] && _CASE="$CASE"
+  [[ ${ALLOW+x} ]] && _ALLOW="$ALLOW"
+  [[ ${MEMO_SEPARATOR+x} ]] && _MEMO_SEPARATOR="$MEMO_SEPARATOR"
+  [[ ${COUNT+x} ]] && _COUNT="$COUNT"
+  [[ ${PLAIN+x} ]] && _PLAIN="$PLAIN"
+  [[ ${SPINNER+x} ]] && _SPINNER="$SPINNER"
+  [[ ${MEMO_CAPITALIZE+x} ]] && _MEMO_CAPITALIZE="$MEMO_CAPITALIZE"
+  [[ ${MEMO_NUM_PER_WORD+x} ]] && _MEMO_NUM_PER_WORD="$MEMO_NUM_PER_WORD"
+  [[ ${SAFE_MODE+x} ]] && _SAFE_MODE="$SAFE_MODE"
+  [[ ${REMOTE_WORDLIST_MIN_LEN+x} ]] && _REMOTE_WORDLIST_MIN_LEN="$REMOTE_WORDLIST_MIN_LEN"
+  [[ ${REMOTE_WORDLIST_URL+x} ]] && _REMOTE_WORDLIST_URL="$REMOTE_WORDLIST_URL"
+  [[ ${LOCAL_WORDLIST_PATH+x} ]] && _LOCAL_WORDLIST_PATH="$LOCAL_WORDLIST_PATH"
+  [[ ${REMOTE_WORDLIST_TIMEOUT+x} ]] && _REMOTE_WORDLIST_TIMEOUT="$REMOTE_WORDLIST_TIMEOUT"
+
   # Search for default.conf
   for config in \
     "$INSTALL_CONFIG_DIR/default.conf" \
@@ -337,6 +359,40 @@ load_user_config() {
     source "$user_config"
   fi
 
+  # Strip CRLF from loaded config values
+  TYPE="${TYPE//$'\r'/}"
+  LENGTH="${LENGTH//$'\r'/}"
+  MEMO_WORDS="${MEMO_WORDS//$'\r'/}"
+  CASE="${CASE//$'\r'/}"
+  ALLOW="${ALLOW//$'\r'/}"
+  MEMO_SEPARATOR="${MEMO_SEPARATOR//$'\r'/}"
+  COUNT="${COUNT//$'\r'/}"
+  PLAIN="${PLAIN//$'\r'/}"
+  SPINNER="${SPINNER//$'\r'/}"
+  MEMO_CAPITALIZE="${MEMO_CAPITALIZE//$'\r'/}"
+  MEMO_NUM_PER_WORD="${MEMO_NUM_PER_WORD//$'\r'/}"
+  SAFE_MODE="${SAFE_MODE//$'\r'/}"
+  REMOTE_WORDLIST_MIN_LEN="${REMOTE_WORDLIST_MIN_LEN//$'\r'/}"
+  REMOTE_WORDLIST_TIMEOUT="${REMOTE_WORDLIST_TIMEOUT//$'\r'/}"
+
+  # Restore environment variables (env vars override config files)
+  [[ ${_TYPE+x} ]] && TYPE="$_TYPE"
+  [[ ${_LENGTH+x} ]] && LENGTH="$_LENGTH"
+  [[ ${_MEMO_WORDS+x} ]] && MEMO_WORDS="$_MEMO_WORDS"
+  [[ ${_CASE+x} ]] && CASE="$_CASE"
+  [[ ${_ALLOW+x} ]] && ALLOW="$_ALLOW"
+  [[ ${_MEMO_SEPARATOR+x} ]] && MEMO_SEPARATOR="$_MEMO_SEPARATOR"
+  [[ ${_COUNT+x} ]] && COUNT="$_COUNT"
+  [[ ${_PLAIN+x} ]] && PLAIN="$_PLAIN"
+  [[ ${_SPINNER+x} ]] && SPINNER="$_SPINNER"
+  [[ ${_MEMO_CAPITALIZE+x} ]] && MEMO_CAPITALIZE="$_MEMO_CAPITALIZE"
+  [[ ${_MEMO_NUM_PER_WORD+x} ]] && MEMO_NUM_PER_WORD="$_MEMO_NUM_PER_WORD"
+  [[ ${_SAFE_MODE+x} ]] && SAFE_MODE="$_SAFE_MODE"
+  [[ ${_REMOTE_WORDLIST_MIN_LEN+x} ]] && REMOTE_WORDLIST_MIN_LEN="$_REMOTE_WORDLIST_MIN_LEN"
+  [[ ${_REMOTE_WORDLIST_URL+x} ]] && REMOTE_WORDLIST_URL="$_REMOTE_WORDLIST_URL"
+  [[ ${_LOCAL_WORDLIST_PATH+x} ]] && LOCAL_WORDLIST_PATH="$_LOCAL_WORDLIST_PATH"
+  [[ ${_REMOTE_WORDLIST_TIMEOUT+x} ]] && REMOTE_WORDLIST_TIMEOUT="$_REMOTE_WORDLIST_TIMEOUT"
+
   return 0
 }
 
@@ -361,6 +417,7 @@ normalize_config() {
   [[ -n "${SPINNER:-}" ]] && SPINNER="$(config_bool SPINNER "$SPINNER")"
   [[ -n "${MEMO_CAPITALIZE:-}" ]] && MEMO_CAPITALIZE="$(config_bool MEMO_CAPITALIZE "$MEMO_CAPITALIZE")"
   [[ -n "${MEMO_NUM_PER_WORD:-}" ]] && MEMO_NUM_PER_WORD="$(config_bool MEMO_NUM_PER_WORD "$MEMO_NUM_PER_WORD")"
+  [[ -n "${SAFE_MODE:-}" ]] && SAFE_MODE="$(config_bool SAFE_MODE "$SAFE_MODE")"
 
   # Lowercase environment fallbacks
   [[ ${type+x} ]] && TYPE="${type,,}"
@@ -497,6 +554,10 @@ install_keygen() {
   check_existing_installations
   confirm_install
 
+  if [[ -e "$INSTALL_BIN_DIR/keygen" ]]; then
+    fatal "Target already exists: $INSTALL_BIN_DIR/keygen"
+  fi
+
   mkdir -p "$INSTALL_BIN_DIR" "$INSTALL_CONFIG_DIR" "$INSTALL_WORDLIST_DIR"
   install -m 0755 "$(script_target_path)" "$INSTALL_BIN_DIR/keygen"
 
@@ -549,6 +610,23 @@ update_keygen() {
   if ! download_to_file "$REMOTE_META_URL" "$tmp_meta" 30; then
     rm -f "$tmp_script" "$tmp_meta" 2>/dev/null || true
     fatal "Could not download update metadata"
+  fi
+
+  if [[ ! -s "$tmp_script" ]]; then
+    rm -f "$tmp_script" "$tmp_meta" 2>/dev/null || true
+    fatal "Downloaded script is empty"
+  fi
+
+  if ! bash -n "$tmp_script"; then
+    rm -f "$tmp_script" "$tmp_meta" 2>/dev/null || true
+    fatal "Downloaded script failed syntax check"
+  fi
+
+  local shebang
+  shebang="$(head -n 1 "$tmp_script")"
+  if [[ "$shebang" != "#!/usr/bin/env bash"* && "$shebang" != "#!/bin/bash"* ]]; then
+    rm -f "$tmp_script" "$tmp_meta" 2>/dev/null || true
+    fatal "Downloaded script does not have a valid bash shebang"
   fi
 
   target="$(script_target_path)"
@@ -613,8 +691,17 @@ normalize_allow() {
 }
 
 validate_args() {
+  # --safe short-circuits type-specific validation
+  if [[ "$SAFE_MODE" == "true" ]]; then
+    is_integer "$LENGTH" || fatal "--length must be an integer"
+    is_integer "$COUNT" || fatal "--count must be an integer"
+    (( LENGTH >= 8 && LENGTH <= 64 )) || fatal "--length must be between 8 and 64"
+    (( COUNT >= 1 && COUNT <= 100 )) || fatal "--count must be between 1 and 100"
+    return 0
+  fi
+
   case "$TYPE" in
-    random|memorable|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|secret|appkey|django|token) ;;
+    random|memorable|passphrase|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|secret|general|django|token) ;;
     *) fatal "Unsupported type: $TYPE" ;;
   esac
 
@@ -648,7 +735,7 @@ parse_args() {
 
   while (($#)); do
     case "$1" in
-      random|memorable|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|secret|appkey|django|safe|token)
+      random|memorable|passphrase|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|secret|general|django|token)
         [[ "$type_set" == "false" ]] || fatal "Multiple output types provided"
         TYPE="$1"
         type_set="true"
@@ -708,7 +795,7 @@ parse_args() {
       -i|--install)
         ACTION="install"
         ;;
-      -i|--uninstall)
+      --uninstall)
         ACTION="uninstall"
         ;;
       -h|--help)
@@ -868,10 +955,10 @@ fetch_wordlist() {
   local ok=0
   if has_command curl; then
     curl -fsSL --max-time "$timeout" "$url" 2>/dev/null |
-      awk '/^[A-Za-z]+$/ && length($0) >= 4 && length($0) <= 30 { print }' > "$tmp" && ok=1
+      awk -v min="$REMOTE_WORDLIST_MIN_LEN" '/^[A-Za-z]+$/ && length($0) >= min && length($0) <= 30 { print }' > "$tmp" && ok=1
   elif has_command wget; then
     wget -q --timeout="$timeout" "$url" -O - 2>/dev/null |
-      awk '/^[A-Za-z]+$/ && length($0) >= 4 && length($0) <= 30 { print }' > "$tmp" && ok=1
+      awk -v min="$REMOTE_WORDLIST_MIN_LEN" '/^[A-Za-z]+$/ && length($0) >= min && length($0) <= 30 { print }' > "$tmp" && ok=1
   fi
 
   if (( ok == 1 )) && [[ -s "$tmp" ]]; then
@@ -1086,19 +1173,24 @@ openssl_required() {
   has_command openssl || fatal "openssl is required for this command"
 }
 
-generate_openssl_hex_32() {
+generate_secret() {
   openssl_required
   openssl rand -hex 32
 }
 
-generate_openssl_base64_32() {
+generate_general() {
   openssl_required
-  openssl rand -base64 32
+  openssl rand -base64 33
 }
 
 generate_safe() {
   openssl_required
   openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+}
+
+generate_token() {
+  openssl_required
+  openssl rand -base64 33 | tr '+/' '-_' | tr -d '='
 }
 
 generate_django_secret() {
@@ -1108,55 +1200,61 @@ generate_django_secret() {
 }
 
 generate_value() {
-  if [[ "$SAFE_MODE" == "true" ]]; then
-    random_token "$LENGTH" 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~'
-    return 0
-  fi
+  local value=""
 
   case "$TYPE" in
     random)
-      random_token "$LENGTH" "$(build_random_charset)"
+      value="$(random_token "$LENGTH" "$(build_random_charset)")"
       ;;
-    memorable)
-      generate_memorable
+    memorable|passphrase)
+      value="$(generate_memorable)"
       ;;
     uuid)
-      generate_uuid
+      value="$(generate_uuid)"
       ;;
     jwt|secret)
-      generate_openssl_hex_32
+      value="$(generate_secret)"
       ;;
-    appkey)
-      generate_openssl_base64_32
+    general)
+      value="$(generate_general)"
       ;;
-    safe|token)
-      generate_safe
+    safe)
+      value="$(generate_safe)"
+      ;;
+    token)
+      value="$(generate_token)"
       ;;
     django)
-      generate_django_secret
+      value="$(generate_django_secret)"
       ;;
     hex)
       case "$CASE" in
-        default|lower|capitalize) random_token "$LENGTH" '0123456789abcdef' ;;
-        upper) random_token "$LENGTH" '0123456789ABCDEF' ;;
+        default|lower|capitalize) value="$(random_token "$LENGTH" '0123456789abcdef')" ;;
+        upper) value="$(random_token "$LENGTH" '0123456789ABCDEF')" ;;
       esac
       ;;
     base64)
-      random_token "$LENGTH" 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+      value="$(random_token "$LENGTH" 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/')"
       ;;
     base64url|nanoid)
-      random_token "$LENGTH" 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-'
+      value="$(random_token "$LENGTH" 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-')"
       ;;
     base32)
       case "$CASE" in
-        lower|capitalize) random_token "$LENGTH" 'abcdefghijklmnopqrstuvwxyz234567' ;;
-        default|upper) random_token "$LENGTH" 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567' ;;
+        lower|capitalize) value="$(random_token "$LENGTH" 'abcdefghijklmnopqrstuvwxyz234567')" ;;
+        default|upper) value="$(random_token "$LENGTH" 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567')" ;;
       esac
       ;;
     base58)
-      random_token "$LENGTH" '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+      value="$(random_token "$LENGTH" '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz')"
       ;;
   esac
+
+  if [[ "$SAFE_MODE" == "true" ]]; then
+    value="$(printf '%s' "$value" | tr ' ' '-' | tr -d "'" | tr '+/' '-_' | tr -dc 'A-Za-z0-9-_.~')"
+  fi
+
+  printf '%s' "$value"
 }
 
 # --- Rendering ----------------------------------------------------------------
@@ -1190,7 +1288,7 @@ render_box() {
     key_value="$LENGTH"
   else
     case "$TYPE" in
-      memorable)
+      memorable|passphrase)
         key_label="words"
         key_value="$MEMO_WORDS"
         ;;
@@ -1202,9 +1300,9 @@ render_box() {
         key_label="format"
         key_value="openssl rand -hex 32"
         ;;
-      appkey)
+      general)
         key_label="format"
-        key_value="openssl rand -base64 32"
+        key_value="openssl rand -base64 33"
         ;;
       django)
         key_label="format"
@@ -1306,6 +1404,10 @@ main() {
       ;;
     update)
       update_keygen
+      return 0
+      ;;
+    uninstall)
+      fatal "Uninstall is not yet implemented. Remove the binary and shared data manually."
       return 0
       ;;
   esac

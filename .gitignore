@@ -4,6 +4,7 @@
 *.tmp
 
 # Test and local install sandboxes
+tasks/
 .cache/
 .local/
 dist/
