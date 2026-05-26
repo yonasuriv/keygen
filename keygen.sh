@@ -4,16 +4,16 @@
 # Requires: bash, od, tr. Optional: uuidgen, curl or wget.
 #
 # Wordlist resolution order (memorable mode):
-#   1. URL ($KEYSMITH_WORDLIST_URL), cached on first download
-#   2. Local file ($KEYSMITH_WORDLIST_PATH, defaults to XDG cache)
+#   1. URL ($KEYGEN_WORDLIST_URL), cached on first download
+#   2. Local file ($KEYGEN_WORDLIST_PATH, installed share, bundled wordlist, or XDG cache)
 #   3. Built-in fallback list
 #
 # Environment variables:
-#   KEYSMITH_WORDLIST_URL      Source URL for the wordlist.
-#   KEYSMITH_WORDLIST_PATH     Local file used as cache and fallback.
-#                              Default: ${XDG_CACHE_HOME:-$HOME/.cache}/keygen/wordlist.txt
-#   KEYSMITH_MIN_WORD_LEN      Minimum word length to accept. Default: 3
-#   KEYSMITH_WORDLIST_TIMEOUT  Download timeout in seconds. Default: 5
+#   KEYGEN_WORDLIST_URL      Source URL for the wordlist.
+#   KEYGEN_WORDLIST_PATH     Local file used as cache and fallback.
+#                              Default: installed/bundled wordlist, then XDG cache
+#   KEYGEN_MIN_WORD_LEN      Minimum word length to accept. Default: 3
+#   KEYGEN_WORDLIST_TIMEOUT  Download timeout in seconds. Default: 5
 #
 # Delete the cache file to force a fresh download on next run.
 
@@ -26,7 +26,27 @@ if ((BASH_VERSINFO[0] < 4)); then
 fi
 
 APP_NAME="keygen"
-APP_VERSION="0.2.0"
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd -P)"
+APP_VERSION="1.0.0"
+
+LOCAL_META_PATH="$SCRIPT_DIR/.meta"
+REMOTE_META_URL="${KEYGEN_META_URL:-https://raw.githubusercontent.com/yonasuriv/${APP_NAME}/refs/heads/main/.meta}"
+REMOTE_SCRIPT_URL="${KEYGEN_SCRIPT_URL:-https://raw.githubusercontent.com/yonasuriv/${APP_NAME}/refs/heads/main/${APP_NAME}.sh}"
+REMOTE_WORDLIST_URL="${KEYGEN_WORDLIST_URL:-https://raw.githubusercontent.com/yonasuriv/${APP_NAME}/refs/heads/main/wordlist/en-memorable.txt}"
+
+if [[ -n "${PREFIX:-}" ]]; then
+  INSTALL_PREFIX="$PREFIX"
+elif [[ -d "$SCRIPT_DIR/../share/${APP_NAME}" ]]; then
+  INSTALL_PREFIX="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
+else
+  INSTALL_PREFIX="/usr/local"
+fi
+INSTALL_BIN_DIR="${KEYGEN_BIN_DIR:-$INSTALL_PREFIX/bin}"
+INSTALL_SHARE_DIR="${KEYGEN_SHARE_DIR:-$INSTALL_PREFIX/share/$APP_NAME}"
+INSTALL_CONFIG_DIR="$INSTALL_SHARE_DIR/config"
+INSTALL_WORDLIST_DIR="$INSTALL_SHARE_DIR/wordlist"
+INSTALLED_META_PATH="$INSTALL_SHARE_DIR/.meta"
 
 TYPE="random"
 LENGTH=16
@@ -37,10 +57,11 @@ SEPARATOR="hyphen"
 COUNT=1
 PLAIN="false"
 SPINNER="true"
+ACTION="generate"
 
 SPINNER_PID=""
 
-DEFAULT_WORDLIST_URL='https://raw.githubusercontent.com/first20hours/google-10000-english/refs/heads/master/google-10000-english-no-swears.txt'
+DEFAULT_WORDLIST_URL="$REMOTE_WORDLIST_URL"
 DEFAULT_WORDLIST_PATH="${XDG_CACHE_HOME:-${HOME}/.cache}/keygen/wordlist.txt"
 
 WORDS_LIST=()
@@ -63,11 +84,16 @@ HARDCODED_WORDS=(
 )
 
 usage() {
-  cat <<'EOF'
-keygen - secure password/key generator
+  local cmd="${0##*/}"
+  cmd="${cmd%.sh}"
+
+  cat <<EOF
+$cmd - secure password/key generator
 
 Usage:
-  keygen [options]
+  $cmd [options]
+  $cmd jwt|secret|appkey|django
+  $cmd --safe
 
 Options:
   -t, --type TYPE          random | memorable | uuid | hex | base64 | base64url | base32 | base58 | nanoid
@@ -80,22 +106,39 @@ Options:
   -s, --separator SEP      hyphen | space | period | comma | underscore | none. Used by memorable mode.
                            Default: hyphen
   -n, --count N            Number of values to generate. Default: 1
+      --safe               URL-safe 32-byte base64 secret without padding.
       --plain              Print generated values only. No color, box, labels, or spinner.
       --no-spinner         Disable spinner.
+  -v, --version            Print current version and check for updates.
+  -u, --update             Update the installed or local script from GitHub.
+  -i, --install            Install keygen under /usr/local by default.
   -h, --help               Show this help.
 
+Special commands:
+  jwt                      Equivalent to: openssl rand -hex 32
+  secret                   Equivalent to: openssl rand -hex 32
+  appkey                   Equivalent to: openssl rand -base64 32
+  django                   Equivalent to: openssl rand -base64 50 | tr -dc 'A-Za-z0-9!@#\$%^&*(-_=+)'
+
 Environment (memorable mode):
-  KEYSMITH_WORDLIST_URL      Source URL. Default: google-10000-english-no-swears
-  KEYSMITH_WORDLIST_PATH     Local cache/fallback. Default: $XDG_CACHE_HOME/keygen/wordlist.txt
-  KEYSMITH_MIN_WORD_LEN      Minimum word length. Default: 3
-  KEYSMITH_WORDLIST_TIMEOUT  Download timeout (seconds). Default: 5
+  KEYGEN_WORDLIST_URL      Source URL. Default: project wordlist on GitHub
+  KEYGEN_WORDLIST_PATH     Local cache/fallback. Default: installed/bundled wordlist, then XDG cache
+  KEYGEN_MIN_WORD_LEN      Minimum word length. Default: 3
+  KEYGEN_WORDLIST_TIMEOUT  Download timeout (seconds). Default: 5
+
+Install/update environment:
+  PREFIX                     Install prefix. Default: /usr/local
+  KEYGEN_BIN_DIR             Override binary directory.
+  KEYGEN_SHARE_DIR           Override shared data directory.
 
 Examples:
-  keygen
-  keygen --length 24 --allow letters,numbers,symbols
-  keygen --type memorable --words 4 --case capitalize --separator hyphen
-  keygen --type uuid --count 3
-  keygen --type base64url --length 32 --plain
+  $cmd
+  $cmd jwt
+  $cmd --safe --plain
+  $cmd --length 24 --allow letters,numbers,symbols
+  $cmd --type memorable --words 4 --case capitalize --separator hyphen
+  $cmd --type uuid --count 3
+  $cmd --type base64url --length 32 --plain
 EOF
 }
 
@@ -110,6 +153,170 @@ fatal() {
 
 is_integer() {
   [[ "${1:-}" =~ ^[0-9]+$ ]]
+}
+
+read_meta_version() {
+  local file="$1"
+  [[ -r "$file" ]] || return 1
+
+  local line version
+  line="$(awk -F= '$1 == "APP_VERSION" { print $2; exit }' "$file" 2>/dev/null)" || return 1
+  version="${line%\"}"
+  version="${version#\"}"
+  [[ -n "$version" ]] || return 1
+  printf '%s' "$version"
+}
+
+init_app_version() {
+  local version
+  if version="$(read_meta_version "$LOCAL_META_PATH")"; then
+    APP_VERSION="$version"
+  elif version="$(read_meta_version "$INSTALLED_META_PATH")"; then
+    APP_VERSION="$version"
+  fi
+}
+
+script_target_path() {
+  if [[ "$SCRIPT_PATH" == /* ]]; then
+    printf '%s' "$SCRIPT_PATH"
+  else
+    printf '%s/%s' "$SCRIPT_DIR" "${SCRIPT_PATH##*/}"
+  fi
+}
+
+download_to_file() {
+  local url="$1"
+  local dest="$2"
+  local timeout="${3:-15}"
+
+  if has_command curl; then
+    curl -fsSL --max-time "$timeout" "$url" -o "$dest"
+  elif has_command wget; then
+    wget -q --timeout="$timeout" "$url" -O "$dest"
+  else
+    return 1
+  fi
+}
+
+fetch_remote_version() {
+  local tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/keygen-meta.XXXXXX")" || return 1
+  if download_to_file "$REMOTE_META_URL" "$tmp" 10; then
+    read_meta_version "$tmp"
+    local rc=$?
+    rm -f "$tmp" 2>/dev/null || true
+    return "$rc"
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+  return 1
+}
+
+version_is_newer() {
+  local remote="$1"
+  local current="$2"
+  [[ "$remote" != "$current" ]] || return 1
+
+  if has_command sort; then
+    [[ "$(printf '%s\n%s\n' "$current" "$remote" | sort -V | tail -n 1)" == "$remote" ]]
+  else
+    [[ "$remote" > "$current" ]]
+  fi
+}
+
+print_version() {
+  init_app_version
+  printf '%s %s\n' "$APP_NAME" "$APP_VERSION"
+
+  local remote
+  if remote="$(fetch_remote_version)"; then
+    if version_is_newer "$remote" "$APP_VERSION"; then
+      printf 'update available: %s\n' "$remote"
+    else
+      printf 'up to date\n'
+    fi
+  else
+    printf 'update check unavailable\n' >&2
+  fi
+}
+
+load_user_config() {
+  local config="$INSTALL_CONFIG_DIR/keygen.conf"
+  [[ -r "$config" ]] || return 0
+  # User-owned shell-style configuration for KEYGEN_* and KEYGEN_* variables.
+  # shellcheck source=/usr/local/share/keygen/config/keygen.conf
+  source "$config"
+}
+
+install_keygen() {
+  init_app_version
+
+  mkdir -p "$INSTALL_BIN_DIR" "$INSTALL_CONFIG_DIR" "$INSTALL_WORDLIST_DIR"
+  install -m 0755 "$(script_target_path)" "$INSTALL_BIN_DIR/keygen"
+
+  if [[ ! -f "$INSTALL_CONFIG_DIR/keygen.conf" ]]; then
+    cat > "$INSTALL_CONFIG_DIR/keygen.conf" <<'EOF'
+# keygen user configuration
+# Uncomment and adjust values as needed.
+# KEYGEN_MIN_WORD_LEN=3
+# KEYGEN_WORDLIST_TIMEOUT=5
+EOF
+  fi
+
+  if [[ -f "$SCRIPT_DIR/wordlist/en-memorable.txt" && ! -f "$INSTALL_WORDLIST_DIR/en-memorable.txt" ]]; then
+    install -m 0644 "$SCRIPT_DIR/wordlist/en-memorable.txt" "$INSTALL_WORDLIST_DIR/en-memorable.txt"
+  fi
+
+  if [[ -f "$LOCAL_META_PATH" ]]; then
+    install -m 0644 "$LOCAL_META_PATH" "$INSTALLED_META_PATH"
+  else
+    printf 'APP_VERSION="%s"\n' "$APP_VERSION" > "$INSTALLED_META_PATH"
+  fi
+
+  printf 'installed %s to %s\n' "$APP_NAME" "$INSTALL_BIN_DIR/keygen"
+  printf 'shared data: %s\n' "$INSTALL_SHARE_DIR"
+}
+
+update_keygen() {
+  init_app_version
+
+  local remote
+  if ! remote="$(fetch_remote_version)"; then
+    fatal "could not check remote version"
+  fi
+
+  if ! version_is_newer "$remote" "$APP_VERSION"; then
+    printf '%s %s is already up to date\n' "$APP_NAME" "$APP_VERSION"
+    return 0
+  fi
+
+  local tmp_script tmp_meta target meta_target
+  tmp_script="$(mktemp "${TMPDIR:-/tmp}/keygen-script.XXXXXX")" || fatal "could not create temporary file"
+  tmp_meta="$(mktemp "${TMPDIR:-/tmp}/keygen-meta.XXXXXX")" || {
+    rm -f "$tmp_script" 2>/dev/null || true
+    fatal "could not create temporary file"
+  }
+
+  if ! download_to_file "$REMOTE_SCRIPT_URL" "$tmp_script" 30; then
+    rm -f "$tmp_script" "$tmp_meta" 2>/dev/null || true
+    fatal "could not download update"
+  fi
+  if ! download_to_file "$REMOTE_META_URL" "$tmp_meta" 30; then
+    rm -f "$tmp_script" "$tmp_meta" 2>/dev/null || true
+    fatal "could not download update metadata"
+  fi
+
+  target="$(script_target_path)"
+  meta_target="$LOCAL_META_PATH"
+  if [[ "$target" == "$INSTALL_BIN_DIR/keygen" || -f "$INSTALLED_META_PATH" ]]; then
+    meta_target="$INSTALLED_META_PATH"
+  fi
+
+  install -m 0755 "$tmp_script" "$target"
+  mkdir -p "$(dirname "$meta_target")"
+  install -m 0644 "$tmp_meta" "$meta_target"
+  rm -f "$tmp_script" "$tmp_meta" 2>/dev/null || true
+
+  printf 'updated %s from %s to %s\n' "$APP_NAME" "$APP_VERSION" "$remote"
 }
 
 contains_allow() {
@@ -161,7 +368,7 @@ normalize_allow() {
 
 validate_args() {
   case "$TYPE" in
-    random|memorable|uuid|hex|base64|base64url|base32|base58|nanoid) ;;
+    random|memorable|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|appkey|django|safe) ;;
     *) fatal "unsupported type: $TYPE" ;;
   esac
 
@@ -189,6 +396,22 @@ validate_args() {
 parse_args() {
   while (($#)); do
     case "$1" in
+      jwt|secret)
+        TYPE="jwt"
+        CASE_MODE="lower"
+        PLAIN="true"
+        SPINNER="false"
+        ;;
+      appkey)
+        TYPE="appkey"
+        PLAIN="true"
+        SPINNER="false"
+        ;;
+      django)
+        TYPE="django"
+        PLAIN="true"
+        SPINNER="false"
+        ;;
       -t|--type)
         shift || fatal "missing value for --type"
         TYPE="${1,,}"
@@ -224,12 +447,26 @@ parse_args() {
         COUNT="$1"
         ;;
       --count=*) COUNT="${1#*=}" ;;
+      --safe)
+        TYPE="safe"
+        PLAIN="true"
+        SPINNER="false"
+        ;;
       --plain)
         PLAIN="true"
         SPINNER="false"
         ;;
       --no-spinner)
         SPINNER="false"
+        ;;
+      -v|--version)
+        ACTION="version"
+        ;;
+      -u|--update)
+        ACTION="update"
+        ;;
+      -i|--install)
+        ACTION="install"
         ;;
       -h|--help)
         usage
@@ -367,7 +604,7 @@ random_token() {
 fetch_wordlist() {
   local url="$1"
   local dest="$2"
-  local timeout="${KEYSMITH_WORDLIST_TIMEOUT:-5}"
+  local timeout="${KEYGEN_WORDLIST_TIMEOUT:-5}"
   is_integer "$timeout" || timeout=5
 
   local dir
@@ -379,9 +616,11 @@ fetch_wordlist() {
 
   local ok=0
   if has_command curl; then
-    curl -fsSL --max-time "$timeout" "$url" | awk '/^[a-z]+$/ && length($0) >= 4 && length($0) <= 10 { print }'-o "$tmp" 2>/dev/null && ok=1
+    curl -fsSL --max-time "$timeout" "$url" 2>/dev/null |
+      awk '/^[A-Za-z]+$/ && length($0) >= 4 && length($0) <= 30 { print }' > "$tmp" && ok=1
   elif has_command wget; then
-    wget -q --timeout="$timeout" "$url" -O "$tmp" 2>/dev/null && ok=1
+    wget -q --timeout="$timeout" "$url" -O - 2>/dev/null |
+      awk '/^[A-Za-z]+$/ && length($0) >= 4 && length($0) <= 30 { print }' > "$tmp" && ok=1
   fi
 
   if (( ok == 1 )) && [[ -s "$tmp" ]]; then
@@ -392,6 +631,18 @@ fetch_wordlist() {
 
   rm -f "$tmp" 2>/dev/null || true
   return 1
+}
+
+wordlist_path_candidates() {
+  if [[ -n "${KEYGEN_WORDLIST_PATH:-}" ]]; then
+    printf '%s\n' "$KEYGEN_WORDLIST_PATH"
+    return 0
+  fi
+
+  printf '%s\n' \
+    "$INSTALL_WORDLIST_DIR/en-memorable.txt" \
+    "$SCRIPT_DIR/wordlist/en-memorable.txt" \
+    "$DEFAULT_WORDLIST_PATH"
 }
 
 # Populate WORDS_LIST from a file, filtering by minimum word length.
@@ -432,31 +683,40 @@ load_words_from_hardcoded() {
 ensure_wordlist() {
   [[ "$WORDS_LOADED" == "true" ]] && return 0
 
-  local min_len="${KEYSMITH_MIN_WORD_LEN:-3}"
-  is_integer "$min_len" || fatal "KEYSMITH_MIN_WORD_LEN must be a positive integer"
-  (( min_len >= 1 )) || fatal "KEYSMITH_MIN_WORD_LEN must be >= 1"
+  local min_len="${KEYGEN_MIN_WORD_LEN:-3}"
+  is_integer "$min_len" || fatal "KEYGEN_MIN_WORD_LEN must be a positive integer"
+  (( min_len >= 1 )) || fatal "KEYGEN_MIN_WORD_LEN must be >= 1"
 
-  local url="${KEYSMITH_WORDLIST_URL:-$DEFAULT_WORDLIST_URL}"
-  local path="${KEYSMITH_WORDLIST_PATH:-$DEFAULT_WORDLIST_PATH}"
+  local url="${KEYGEN_WORDLIST_URL:-$DEFAULT_WORDLIST_URL}"
+  local path="${KEYGEN_WORDLIST_PATH:-$DEFAULT_WORDLIST_PATH}"
+  local candidate
 
-  # Step 1: if no local copy yet, try downloading from the URL.
-  if [[ ! -s "$path" ]]; then
+  # Step 1: read from an explicit, installed, bundled, or cached wordlist.
+  while IFS= read -r candidate; do
+    if [[ -s "$candidate" ]] && load_words_from_file "$candidate" "$min_len"; then
+      WORDS_LOADED="true"
+      return 0
+    fi
+  done < <(wordlist_path_candidates)
+
+  # Step 2: if no local copy worked, try downloading into the first writable candidate.
+  if [[ -n "$path" ]]; then
     fetch_wordlist "$url" "$path" || true
   fi
 
-  # Step 2: read from the local file (just downloaded or pre-existing).
+  # Step 3: read from the local file just downloaded.
   if [[ -s "$path" ]] && load_words_from_file "$path" "$min_len"; then
     WORDS_LOADED="true"
     return 0
   fi
 
-  # Step 3: built-in fallback.
+  # Step 4: built-in fallback.
   if load_words_from_hardcoded "$min_len"; then
     WORDS_LOADED="true"
     return 0
   fi
 
-  fatal "no words available with KEYSMITH_MIN_WORD_LEN=$min_len"
+  fatal "no words available with KEYGEN_MIN_WORD_LEN=$min_len"
 }
 
 # --- Generators ---------------------------------------------------------------
@@ -558,6 +818,31 @@ generate_uuid() {
   esac
 }
 
+openssl_required() {
+  has_command openssl || fatal "openssl is required for this command"
+}
+
+generate_openssl_hex_32() {
+  openssl_required
+  openssl rand -hex 32
+}
+
+generate_openssl_base64_32() {
+  openssl_required
+  openssl rand -base64 32
+}
+
+generate_safe() {
+  openssl_required
+  openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+}
+
+generate_django_secret() {
+  openssl_required
+  LC_ALL=C openssl rand -base64 50 | tr -dc 'A-Za-z0-9!@#$%^&*(-_=+)'
+  printf '\n'
+}
+
 generate_value() {
   case "$TYPE" in
     random)
@@ -568,6 +853,18 @@ generate_value() {
       ;;
     uuid)
       generate_uuid
+      ;;
+    jwt)
+      generate_openssl_hex_32
+      ;;
+    appkey)
+      generate_openssl_base64_32
+      ;;
+    safe)
+      generate_safe
+      ;;
+    django)
+      generate_django_secret
       ;;
     hex)
       case "$CASE_MODE" in
@@ -690,7 +987,25 @@ render_box() {
 }
 
 main() {
+  init_app_version
+  load_user_config
   parse_args "$@"
+
+  case "$ACTION" in
+    version)
+      print_version
+      return 0
+      ;;
+    install)
+      install_keygen
+      return 0
+      ;;
+    update)
+      update_keygen
+      return 0
+      ;;
+  esac
+
   validate_args
   color_init
 

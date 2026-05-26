@@ -1,0 +1,66 @@
+name: Bump version
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - keygen.sh
+      - wordlist/**
+
+permissions:
+  contents: write
+
+concurrency:
+  group: version-bump-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bump-version:
+    name: Bump patch version
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump .meta patch version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current="$(awk -F= '$1 == "APP_VERSION" { gsub(/"/, "", $2); print $2; exit }' .meta)"
+          if [[ ! "$current" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+            printf 'Invalid APP_VERSION in .meta: %s\n' "$current" >&2
+            exit 1
+          fi
+
+          IFS=. read -r major minor patch <<< "$current"
+          next="${major}.${minor}.$((patch + 1))"
+
+          printf 'APP_VERSION="%s"\n' "$next" > .meta
+
+          awk -v next="$next" '
+            /^APP_VERSION="/ && !updated {
+              printf "APP_VERSION=\"%s\"\n", next
+              updated = 1
+              next
+            }
+            { print }
+          ' keygen.sh > keygen.sh.tmp
+          mv keygen.sh.tmp keygen.sh
+          chmod +x keygen.sh
+
+          if git diff --quiet -- .meta keygen.sh; then
+            printf 'Version is already current: %s\n' "$next"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .meta keygen.sh
+          git commit -m "chore: bump version to ${next}"
+          git push

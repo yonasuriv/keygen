@@ -1,0 +1,9 @@
+# Local/generated files
+.DS_Store
+*.swp
+*.tmp
+
+# Test and local install sandboxes
+.cache/
+.local/
+dist/
