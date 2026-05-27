@@ -449,7 +449,7 @@ install_scope() {
   fi
 }
 
-confirm_install() {
+print_install_info() {
   local scope
   scope="$(install_scope)"
 
@@ -457,7 +457,11 @@ confirm_install() {
   printf '\nThis will install %s to:\n' "$APP_NAME"
   printf '\n  Binary: %s/keygen\n' "$INSTALL_BIN_DIR"
   printf '  Shared data: %s\n' "$INSTALL_SHARE_DIR"
-  printf '\nContinue? [Y/n] '
+}
+
+prompt_yes_no() {
+  local prompt_text="$1"
+  local default_yes="$2"
 
   if [[ ! -t 0 ]]; then
     printf '\n'
@@ -465,11 +469,20 @@ confirm_install() {
   fi
 
   local answer
+  printf '%s ' "$prompt_text"
   IFS= read -r answer
-  case "${answer,,}" in
-    y|yes) ;;
-    *) fatal "Installation cancelled" ;;
-  esac
+
+  if [[ "$default_yes" == "true" ]]; then
+    case "${answer,,}" in
+      n|no) fatal "Installation cancelled" ;;
+      *) ;;
+    esac
+  else
+    case "${answer,,}" in
+      y|yes) ;;
+      *) fatal "Installation cancelled" ;;
+    esac
+  fi
 }
 
 installation_candidates() {
@@ -554,10 +567,12 @@ install_keygen() {
   init_app_version
 
   check_existing_installations
-  confirm_install
+  print_install_info
 
   if [[ -e "$INSTALL_BIN_DIR/keygen" ]]; then
-    fatal "Target already exists: $INSTALL_BIN_DIR/keygen"
+    prompt_yes_no "Reinstall? [y/N]" "false"
+  else
+    prompt_yes_no "Continue? [Y/n]" "true"
   fi
 
   mkdir -p "$INSTALL_BIN_DIR" "$INSTALL_CONFIG_DIR" "$INSTALL_WORDLIST_DIR"
