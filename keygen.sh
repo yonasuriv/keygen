@@ -62,6 +62,7 @@ ACTION="${ACTION:-generate}"
 MEMO_CAPITALIZE="${MEMO_CAPITALIZE:-}"
 MEMO_NUM_PER_WORD="${MEMO_NUM_PER_WORD:-}"
 SAFE_MODE="${SAFE_MODE:-}"
+ASSUME_YES="${ASSUME_YES:-}"
 REMOTE_WORDLIST_MIN_LEN="${REMOTE_WORDLIST_MIN_LEN:-}"
 REMOTE_WORDLIST_TIMEOUT="${REMOTE_WORDLIST_TIMEOUT:-}"
 
@@ -160,6 +161,7 @@ Options:
   -v, --version           Print the current version and check for updates.
   -u, --update            Update the installed or local script from GitHub.
   -i, --install           Install keygen. Uses /usr when run as root, otherwise ~/.local.
+  -y, --yes               Skip installation confirmation prompts.
   -p, --plain             Print generated values only. Disables colors, boxes, and labels.
       --no-spinner        Disable the progress spinner.
   -h, --help              Show this help message.
@@ -462,6 +464,10 @@ print_install_info() {
 prompt_yes_no() {
   local prompt_text="$1"
   local default_yes="$2"
+
+  if [[ "$ASSUME_YES" == "true" ]]; then
+    return 0
+  fi
 
   if [[ ! -t 0 ]]; then
     printf '\n'
@@ -813,6 +819,9 @@ parse_args() {
         ;;
       --uninstall)
         ACTION="uninstall"
+        ;;
+      -y|--yes)
+        ASSUME_YES="true"
         ;;
       -h|--help)
         usage
