@@ -72,7 +72,7 @@ Patch versions are bumped automatically on pushes to main branch that change cor
 <!-- Configuration -->
 <details>
   <summary><b>Configuration</b></summary>
-  
+
 The installed config file is a shell-style file:
 
 ```sh

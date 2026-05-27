@@ -456,7 +456,7 @@ print_install_info() {
   printf '\nYou are running this command as %s.\n' "$scope"
   printf '\nThis will install %s to:\n' "$APP_NAME"
   printf '\n  Binary: %s/keygen\n' "$INSTALL_BIN_DIR"
-  printf '  Shared data: %s\n' "$INSTALL_SHARE_DIR"
+  printf '  Shared data: %s\n\n' "$INSTALL_SHARE_DIR"
 }
 
 prompt_yes_no() {
@@ -570,9 +570,9 @@ install_keygen() {
   print_install_info
 
   if [[ -e "$INSTALL_BIN_DIR/keygen" ]]; then
-    prompt_yes_no "Reinstall? [y/N]" "false"
+    prompt_yes_no "Reinstall? [y/N]:" "false"
   else
-    prompt_yes_no "Continue? [Y/n]" "true"
+    prompt_yes_no "Continue? [Y/n]:" "true"
   fi
 
   mkdir -p "$INSTALL_BIN_DIR" "$INSTALL_CONFIG_DIR" "$INSTALL_WORDLIST_DIR"
@@ -596,8 +596,7 @@ install_keygen() {
     printf 'APP_VERSION="%s"\n' "$APP_VERSION" > "$INSTALLED_META_PATH"
   fi
 
-  printf 'installed %s to %s\n' "$APP_NAME" "$INSTALL_BIN_DIR/keygen"
-  printf 'shared data: %s\n' "$INSTALL_SHARE_DIR"
+  printf 'Done.'
 }
 
 update_keygen() {
