@@ -16,7 +16,7 @@ It uses `/dev/urandom` for built-in character generation and delegates the frame
 - Version checks, self-update, and system install commands
 
 <p align="center">
-  <img width="424" height="281" alt="Keygen" src=".github/assets/example.png" />
+  <img width="624" height="481" alt="Keygen" src=".github/assets/example3.png" />
 </p>
 
 > [!NOTE]
