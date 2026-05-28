@@ -132,7 +132,7 @@ Options:
       --safe              Generate a .env-friendly and URL-safe value using the A-Za-z0-9._~- charset.
 
   -t, --type VALUE        Output mode.
-                          Values: random, memorable, uuid, hex, base32, base58, base64, base64url, nanoid, token, {special types}
+                          Values: memorable, random, basic, uuid, hex, base32, base58, base64, base64url, nanoid, token, {special types}
                           Default: random
 
   -c, --case VALUE        Letter casing for generated output.
@@ -167,8 +167,8 @@ Options:
   -h, --help              Show this help message.
 
 Special types:
-  jwt                     Generate a JWT secret.
-  secret                  Generate a general-purpose secret.
+  secret,jwt              Generate a JWT/general-purpose secret.
+  basic,flag              Generate a MD5 flag-style secret.
   general                 Generate a general-purpose secret key for apps, APIs, and services.
   token                   Generate a URL-safe 32-byte Base64 secret without padding.
   django                  Generate a Django-style secret key.
@@ -723,7 +723,7 @@ validate_args() {
   fi
 
   case "$TYPE" in
-    random|memorable|passphrase|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|secret|general|django|token) ;;
+    random|memorable|passphrase|basic|flag|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|secret|general|django|token) ;;
     *) fatal "Unsupported type: $TYPE" ;;
   esac
 
@@ -757,7 +757,7 @@ parse_args() {
 
   while (($#)); do
     case "$1" in
-      random|memorable|passphrase|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|secret|general|django|token)
+      random|memorable|passphrase|basic|flag|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|secret|general|django|token)
         [[ "$type_set" == "false" ]] || fatal "Multiple output types provided"
         TYPE="$1"
         type_set="true"
@@ -1198,6 +1198,11 @@ openssl_required() {
   has_command openssl || fatal "openssl is required for this command"
 }
 
+generate_basic() {
+  openssl_required
+  openssl rand -hex 16
+}
+
 generate_secret() {
   openssl_required
   openssl rand -hex 32
@@ -1236,6 +1241,9 @@ generate_value() {
       ;;
     uuid)
       value="$(generate_uuid)"
+      ;;
+    basic|flag)
+      value="$(generate_basic)"
       ;;
     jwt|secret)
       value="$(generate_secret)"
@@ -1320,6 +1328,10 @@ render_box() {
       uuid)
         key_label="format"
         key_value="RFC 4122 v4"
+        ;;
+      basic|flag)
+        key_label="format"
+        key_value="openssl rand -hex 16"
         ;;
       jwt|secret)
         key_label="format"
