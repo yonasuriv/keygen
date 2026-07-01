@@ -21,7 +21,7 @@ fi
 APP_NAME="keygen"
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd -P)"
-APP_VERSION="1.0.0"
+APP_VERSION="1.0.1"
 
 LOCAL_META_PATH="$SCRIPT_DIR/.meta"
 REMOTE_META_URL="${KEYGEN_META_URL:-https://raw.githubusercontent.com/yonasuriv/${APP_NAME}/refs/heads/main/.meta}"
