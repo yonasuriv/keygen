@@ -13,6 +13,7 @@ It uses `/dev/urandom` for built-in character generation and delegates the frame
 - UUID v4 generation
 - Hex, base64, base64url, base32, base58, and nanoid-style tokens
 - One-shot shortcuts for JWT secrets, app keys, Django secrets, and URL-safe secrets
+- Ed25519 SSH key pair generation with clipboard support
 - Version checks, self-update, and system install commands
 
 <p align="center">
@@ -150,6 +151,7 @@ Options:
   -i, --install           Install keygen. Uses /usr when run as root, otherwise ~/.local.
   -p, --plain             Print generated values only. Disables colors, boxes, and labels.
       --no-spinner        Disable the progress spinner.
+      --force             Regenerate an existing SSH key pair (ssh mode only).
   -h, --help              Show this help message.
 ```
 
@@ -162,6 +164,8 @@ Special types:
   general                 Generate a general-purpose secret key for apps, APIs, and services.
   token                   Generate a URL-safe 32-byte Base64 secret without padding.
   django                  Generate a Django-style secret key.
+  ssh                     Create an Ed25519 SSH key pair in ~/.ssh/ if missing.
+                          Use ssh pub or ssh priv to copy keys to the clipboard.
 ```
 ```
 Environment (memorable mode):

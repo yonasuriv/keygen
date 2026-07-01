@@ -43,9 +43,9 @@ jobs:
 
           printf 'APP_VERSION="%s"\n' "$next" > .meta
 
-          awk -v next="$next" '
+          awk -v new_version="$next" '
             /^APP_VERSION="/ && !updated {
-              printf "APP_VERSION=\"%s\"\n", next
+              printf "APP_VERSION=\"%s\"\n", new_version
               updated = 1
               next
             }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # keygen.sh
 # Secure password/key generator with polished terminal output.
-# Requires: bash, od, tr. Optional: uuidgen, curl or wget.
+# Requires: bash, od, tr. Optional: uuidgen, curl or wget, ssh-keygen, xclip/wl-copy/xsel/pbcopy.
 #
 # Wordlist resolution order (memorable mode):
 #   1. URL ($REMOTE_WORDLIST_URL), cached on first download
@@ -63,6 +63,8 @@ MEMO_CAPITALIZE="${MEMO_CAPITALIZE:-}"
 MEMO_NUM_PER_WORD="${MEMO_NUM_PER_WORD:-}"
 SAFE_MODE="${SAFE_MODE:-}"
 ASSUME_YES="${ASSUME_YES:-}"
+SSH_FORCE="${SSH_FORCE:-}"
+SSH_ACTION="${SSH_ACTION:-}"
 REMOTE_WORDLIST_MIN_LEN="${REMOTE_WORDLIST_MIN_LEN:-}"
 REMOTE_WORDLIST_TIMEOUT="${REMOTE_WORDLIST_TIMEOUT:-}"
 
@@ -79,6 +81,8 @@ set_config_defaults() {
   [[ -z "$MEMO_CAPITALIZE" ]] && MEMO_CAPITALIZE="true"
   [[ -z "$MEMO_NUM_PER_WORD" ]] && MEMO_NUM_PER_WORD="true"
   [[ -z "$SAFE_MODE" ]] && SAFE_MODE="false"
+  [[ -z "$SSH_FORCE" ]] && SSH_FORCE="false"
+  [[ -z "$SSH_ACTION" ]] && SSH_ACTION="generate"
   [[ -z "${REMOTE_WORDLIST_MIN_LEN:-}" ]] && REMOTE_WORDLIST_MIN_LEN=4
   [[ -z "${REMOTE_WORDLIST_TIMEOUT:-}" ]] && REMOTE_WORDLIST_TIMEOUT=5
 
@@ -164,6 +168,7 @@ Options:
   -y, --yes               Skip installation confirmation prompts.
   -p, --plain             Print generated values only. Disables colors, boxes, and labels.
       --no-spinner        Disable the progress spinner.
+      --force             Regenerate an existing SSH key pair (ssh mode only).
   -h, --help              Show this help message.
 
 Special types:
@@ -172,6 +177,8 @@ Special types:
   general                 Generate a general-purpose secret key for apps, APIs, and services.
   token                   Generate a URL-safe 32-byte Base64 secret without padding.
   django                  Generate a Django-style secret key.
+  ssh                     Create an Ed25519 SSH key pair in ~/.ssh/ if missing.
+                          Subcommands: pub (copy public key), priv (copy private key).
 
 Environment (memorable mode):
   LOCAL_WORDLIST_PATH        Local cache/fallback. Default: installed/bundled wordlist, then XDG cache
@@ -193,6 +200,10 @@ Examples:
   $cmd --type memorable --words 4 --case capitalize --separator hyphen
   $cmd --type uuid --count 3
   $cmd --type base64url --length 32 --plain
+  $cmd ssh
+  $cmd ssh --force
+  $cmd ssh pub
+  $cmd ssh priv
 EOF
 }
 
@@ -422,6 +433,7 @@ normalize_config() {
   [[ -n "${MEMO_CAPITALIZE:-}" ]] && MEMO_CAPITALIZE="$(config_bool MEMO_CAPITALIZE "$MEMO_CAPITALIZE")"
   [[ -n "${MEMO_NUM_PER_WORD:-}" ]] && MEMO_NUM_PER_WORD="$(config_bool MEMO_NUM_PER_WORD "$MEMO_NUM_PER_WORD")"
   [[ -n "${SAFE_MODE:-}" ]] && SAFE_MODE="$(config_bool SAFE_MODE "$SAFE_MODE")"
+  [[ -n "${SSH_FORCE:-}" ]] && SSH_FORCE="$(config_bool SSH_FORCE "$SSH_FORCE")"
 
   # Lowercase environment fallbacks
   [[ ${type+x} ]] && TYPE="${type,,}"
@@ -723,9 +735,26 @@ validate_args() {
   fi
 
   case "$TYPE" in
-    random|memorable|passphrase|basic|flag|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|secret|general|django|token) ;;
+    random|memorable|passphrase|basic|flag|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|secret|general|django|token|ssh) ;;
     *) fatal "Unsupported type: $TYPE" ;;
   esac
+
+  if [[ "$TYPE" == "ssh" ]]; then
+    case "$SSH_ACTION" in
+      generate|pub|priv) ;;
+      *) fatal "Unsupported ssh subcommand: $SSH_ACTION" ;;
+    esac
+    if [[ "$SSH_FORCE" == "true" && "$SSH_ACTION" != "generate" ]]; then
+      fatal "--force is only supported with ssh generate"
+    fi
+    is_integer "$COUNT" || fatal "--count must be an integer"
+    (( COUNT == 1 )) || fatal "ssh mode only supports --count 1"
+    return 0
+  fi
+
+  if [[ "$SSH_FORCE" == "true" ]]; then
+    fatal "--force is only supported with ssh mode"
+  fi
 
   case "$CASE" in
     default|lower|upper|capitalize) ;;
@@ -757,7 +786,7 @@ parse_args() {
 
   while (($#)); do
     case "$1" in
-      random|memorable|passphrase|basic|flag|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|secret|general|django|token)
+      random|memorable|passphrase|basic|flag|uuid|hex|base64|base64url|base32|base58|nanoid|jwt|secret|general|django|token|ssh)
         [[ "$type_set" == "false" ]] || fatal "Multiple output types provided"
         TYPE="$1"
         type_set="true"
@@ -808,6 +837,9 @@ parse_args() {
       --no-spinner)
         SPINNER="false"
         ;;
+      --force)
+        SSH_FORCE="true"
+        ;;
       -v|--version)
         ACTION="version"
         ;;
@@ -838,6 +870,12 @@ parse_args() {
         if [[ "$type_set" == "false" ]]; then
           TYPE="${1,,}"
           type_set="true"
+        elif [[ "$TYPE" == "ssh" && "$SSH_ACTION" == "generate" ]]; then
+          case "${1,,}" in
+            pub|public) SSH_ACTION="pub" ;;
+            priv|private) SSH_ACTION="priv" ;;
+            *) fatal "Unexpected argument: $1" ;;
+          esac
         else
           fatal "Unexpected argument: $1"
         fi
@@ -1229,6 +1267,189 @@ generate_django_secret() {
   printf '\n'
 }
 
+ssh_key_paths() {
+  SSH_DIR="${HOME}/.ssh"
+  SSH_PRIVATE_KEY="$SSH_DIR/id_ed25519"
+  SSH_PUBLIC_KEY="${SSH_PRIVATE_KEY}.pub"
+}
+
+ssh_key_comment() {
+  local user host
+  user="$(id -un 2>/dev/null || printf 'user')"
+  host="$(hostname -f 2>/dev/null || hostname 2>/dev/null || printf 'localhost')"
+  printf '%s@%s' "$user" "$host"
+}
+
+require_ssh_keys() {
+  ssh_key_paths
+  [[ -f "$SSH_PRIVATE_KEY" && -f "$SSH_PUBLIC_KEY" ]] || \
+    fatal "SSH key pair not found at $SSH_PRIVATE_KEY (run: ${0##*/} ssh)"
+}
+
+copy_file_to_clipboard() {
+  local file="$1"
+
+  [[ -r "$file" ]] || return 1
+
+  if has_command wl-copy; then
+    wl-copy < "$file"
+    return 0
+  fi
+  if has_command xclip; then
+    xclip -selection clipboard < "$file"
+    return 0
+  fi
+  if has_command xsel; then
+    xsel --clipboard --input < "$file"
+    return 0
+  fi
+  if has_command pbcopy; then
+    pbcopy < "$file"
+    return 0
+  fi
+
+  return 1
+}
+
+print_clipboard_message() {
+  local message="$1"
+  local color="${2:-$OK}"
+
+  if [[ "$PLAIN" == "true" ]]; then
+    printf '%s\n' "\n$message"
+  else
+    printf '%b%s%b\n' "\n$color" "$message" "$RESET"
+  fi
+}
+
+copy_ssh_public_key() {
+  require_ssh_keys
+
+  if copy_file_to_clipboard "$SSH_PUBLIC_KEY"; then
+    print_clipboard_message " ➤ Public key copied to clipboard." "$OK"
+    return 0
+  fi
+
+  fatal "Clipboard tool not found (install xclip, wl-copy, xsel, or pbcopy)"
+}
+
+copy_ssh_private_key() {
+  require_ssh_keys
+
+  if copy_file_to_clipboard "$SSH_PRIVATE_KEY"; then
+    print_clipboard_message " ➤ Private key copied to clipboard." "$RED"
+    return 0
+  fi
+
+  fatal "Clipboard tool not found (install xclip, wl-copy, xsel, or pbcopy)"
+}
+
+render_ssh_output() {
+  local private_key="$1"
+  local public_key="$2"
+  local public_value="$3"
+  local created="$4"
+  local status="existing"
+
+  [[ "$created" == "true" ]] && status="created"
+
+  if [[ "$PLAIN" == "true" ]]; then
+    printf '%s\n' "$public_value"
+    printf '%s\n' "$public_key"
+    printf '%s\n' "$private_key"
+    return 0
+  fi
+
+  local rows=(
+    "mode|ssh"
+    "algorithm|ed25519"
+    "status|$status"
+    "public|$public_key"
+    "private|$private_key"
+  )
+
+  local width=57
+  local row label value visible horizontal
+
+  for row in "${rows[@]}"; do
+    label="${row%%|*}"
+    value="${row#*|}"
+    visible=$((2 + 10 + 1 + ${#value}))
+    (( visible > width )) && width="$visible"
+  done
+
+  visible=$((2 + 10 + 1 + ${#public_value}))
+  (( visible > width )) && width="$visible"
+
+  horizontal="$(repeat_line "$width")"
+
+  box_row() {
+    local label="$1"
+    local value="$2"
+    local value_style="${3:-}"
+    local row_visible=$((2 + 10 + 1 + ${#value}))
+    local pad=$((width - row_visible))
+
+    printf '%b│%b  %b%-10s%b %b%s%b%*s%b│%b\n' \
+      "$LINE" "$RESET" \
+      "$MUTED" "$label" "$RESET" \
+      "$value_style" "$value" "$RESET" \
+      "$pad" "" \
+      "$LINE" "$RESET"
+  }
+
+  printf '%b╭%s╮%b\n' "$LINE" "$horizontal" "$RESET"
+  for row in "${rows[@]}"; do
+    box_row "${row%%|*}" "${row#*|}"
+  done
+  printf '%b├%s┤%b\n' "$LINE" "$horizontal" "$RESET"
+  box_row "value" "$public_value" "$OK$BOLD"
+  printf '%b╰%s╯%b\n' "$LINE" "$horizontal" "$RESET"
+}
+
+generate_ssh_keys() {
+  has_command ssh-keygen || fatal "ssh-keygen is required for SSH key generation"
+
+  local comment created="false"
+  local public_value
+
+  ssh_key_paths
+  mkdir -p "$SSH_DIR"
+  chmod 700 "$SSH_DIR"
+
+  comment="$(ssh_key_comment)"
+
+  if [[ -f "$SSH_PRIVATE_KEY" || -f "$SSH_PUBLIC_KEY" ]]; then
+    if [[ "$SSH_FORCE" == "true" ]]; then
+      rm -f "$SSH_PRIVATE_KEY" "$SSH_PUBLIC_KEY"
+      ssh-keygen -t ed25519 -f "$SSH_PRIVATE_KEY" -N "" -C "$comment" -q
+      created="true"
+    else
+      [[ -f "$SSH_PRIVATE_KEY" && -f "$SSH_PUBLIC_KEY" ]] || \
+        fatal "Incomplete SSH key pair at $SSH_PRIVATE_KEY"
+      if [[ "$PLAIN" != "true" ]]; then
+        printf '%bNote%b: SSH key already exists at %s (use --force to regenerate)\n' \
+          "$WARN" "$RESET" "$SSH_PRIVATE_KEY" >&2
+      else
+        printf 'SSH key already exists at %s (use --force to regenerate)\n' "$SSH_PRIVATE_KEY" >&2
+      fi
+    fi
+  else
+    ssh-keygen -t ed25519 -f "$SSH_PRIVATE_KEY" -N "" -C "$comment" -q
+    created="true"
+  fi
+
+  [[ -f "$SSH_PRIVATE_KEY" && -f "$SSH_PUBLIC_KEY" ]] || fatal "SSH key generation failed"
+
+  chmod 600 "$SSH_PRIVATE_KEY"
+  chmod 644 "$SSH_PUBLIC_KEY"
+
+  public_value="$(tr -d '\r' < "$SSH_PUBLIC_KEY")"
+  [[ -n "$public_value" ]] || fatal "SSH public key is empty"
+
+  render_ssh_output "$SSH_PRIVATE_KEY" "$SSH_PUBLIC_KEY" "$public_value" "$created"
+}
+
 generate_value() {
   local value=""
 
@@ -1451,6 +1672,23 @@ main() {
 
   validate_args
   color_init
+
+  if [[ "$TYPE" == "ssh" ]]; then
+    case "$SSH_ACTION" in
+      generate)
+        spinner_start "Generating SSH key pair"
+        generate_ssh_keys
+        spinner_stop
+        ;;
+      pub)
+        copy_ssh_public_key
+        ;;
+      priv)
+        copy_ssh_private_key
+        ;;
+    esac
+    return 0
+  fi
 
   local values=()
   local i
